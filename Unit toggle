@@ -1,0 +1,21 @@
+import React from 'react';
+import { Button } from '@/components/ui/button';
+import { useTheme } from '../theme/ThemeProvider';
+
+export default function UnitToggle() {
+  const { temperatureUnit, toggleTemperatureUnit } = useTheme();
+
+  return (
+    <Button
+      onClick={toggleTemperatureUnit}
+      variant="ghost"
+      size="icon"
+      className="glass-effect border-white/20 hover:bg-white/30 w-auto h-10 px-3 text-sm"
+      aria-label={`Switch to ${temperatureUnit === 'celsius' ? 'Fahrenheit' : 'Celsius'}`}
+    >
+      <span className={temperatureUnit === 'celsius' ? 'font-bold text-gray-900 dark:text-white' : 'text-gray-600 dark:text-gray-400'}>°C</span>
+      <span className="mx-1 text-gray-400">/</span>
+      <span className={temperatureUnit === 'fahrenheit' ? 'font-bold text-gray-900 dark:text-white' : 'text-gray-600 dark:text-gray-400'}>°F</span>
+    </Button>
+  );
+}
