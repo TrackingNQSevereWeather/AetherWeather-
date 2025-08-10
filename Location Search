@@ -1,0 +1,67 @@
+import React, { useState } from "react";
+import { motion } from "framer-motion";
+import { Input } from "@/components/ui/input";
+import { Button } from "@/components/ui/button";
+import { Search, MapPin, Loader2, Navigation, AlertCircle } from "lucide-react";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import { WeatherAPI } from "./WeatherAPI";
+
+export default function LocationSearch({ onLocationSelect, isLoading }) {
+  const [searchTerm, setSearchTerm] = useState("");
+  const [suggestions, setSuggestions] = useState([]);
+  const [showSuggestions, setShowSuggestions] = useState(false);
+  const [isSearching, setIsSearching] = useState(false);
+  const [isGettingLocation, setIsGettingLocation] = useState(false);
+  const [locationError, setLocationError] = useState(null);
+
+  const handleSearch = async (e) => {
+    e.preventDefault();
+    if (searchTerm.trim()) {
+      setShowSuggestions(false);
+      onLocationSelect(searchTerm.trim());
+    }
+  };
+
+  const handleInputChange = async (e) => {
+    const value = e.target.value;
+    setSearchTerm(value);
+
+    if (value.length > 2) {
+      setIsSearching(true);
+      try {
+        const locations = await WeatherAPI.searchLocation(value);
+        setSuggestions(locations.slice(0, 5));
+        setShowSuggestions(true);
+      } catch (error) {
+        console.error('Error searching locations:', error);
+        setSuggestions([]);
+      } finally {
+        setIsSearching(false);
+      }
+    } else {
+      setSuggestions([]);
+      setShowSuggestions(false);
+    }
+  };
+
+  const handleSuggestionClick = (location) => {
+    setSearchTerm(location.name);
+    setShowSuggestions(false);
+    onLocationSelect({
+      lat: location.lat,
+      lon: location.lon
+    });
+  };
+
+  const handleCurrentLocation = () => {
+    setLocationError(null);
+    setIsGettingLocation(true);
+
+    if (!navigator.geolocation) {
+      setLocationError("Geolocation is not supported by this browser");
+      setIsGettingLocation(false);
+      return;
+    }
+
+    const options = {
+ 
