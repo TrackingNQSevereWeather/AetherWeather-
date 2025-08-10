@@ -1,0 +1,443 @@
+
+import React, { useState, useEffect } from 'react';
+import { motion } from 'framer-motion';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import { Fish, TrendingUp, TrendingDown, Minus, Clock, RefreshCw, Loader2, Waves, Sun, Moon } from 'lucide-react';
+import { InvokeLLM } from '@/integrations/Core';
+import { useTheme } from '../theme/ThemeProvider';
+
+export default function FishingConditions({ weatherData }) {
+  const { theme } = useTheme();
+  const [fishingData, setFishingData] = useState(null);
+  const [isLoading, setIsLoading] = useState(false);
+  const [lastUpdated, setLastUpdated] = useState(null);
+
+  const fetchFishingConditions = async () => {
+    if (!weatherData?.location) return;
+
+    setIsLoading(true);
+    try {
+      const response = await InvokeLLM({
+        prompt: `Analyze current fishing conditions for ${weatherData.location} based on the following weather data:
+
+        Current Conditions:
+        - Temperature: ${weatherData.current_temp}°C
+        - Pressure: ${weatherData.pressure} hPa
+        - Humidity: ${weatherData.humidity}%
+        - Wind: ${weatherData.wind_speed} km/h ${weatherData.wind_direction}
+        - Visibility: ${weatherData.visibility} km
+        - Weather: ${weatherData.description}
+
+        Consider these fishing factors:
+        1. Barometric pressure and trends (rising/falling/stable)
+        2. Weather patterns (clear, overcast, rain approaching)
+        3. Wind conditions and water surface
+        4. Temperature effects on fish activity
+        5. Time of day and seasonal patterns
+        6. Local fish species behavior
+        7. Moon phases if relevant
+        8. Tidal information if coastal
+        
+        Provide a comprehensive fishing forecast including:
+        - Overall rating and numerical score (1-10)
+        - Best fishing times today
+        - Pressure trend analysis
+        - Species-specific recommendations
+        - Bait/lure suggestions
+        - Water conditions assessment
+        - Safety considerations`,
+        add_context_from_internet: true,
+        response_json_schema: {
+          type: "object",
+          properties: {
+            overall_rating: { type: "string", enum: ["Excellent", "Good", "Fair", "Poor"] },
+            score: { type: "number", minimum: 1, maximum: 10 },
+            pressure_analysis: {
+              type: "object",
+              properties: {
+                trend: { type: "string", enum: ["rising", "falling", "steady"] },
+                effect_on_fish: { type: "string" },
+                ideal_pressure_range: { type: "string" }
+              }
+            },
+            water_conditions: {
+              type: "object",
+              properties: {
+                surface: { type: "string", enum: ["calm", "light chop", "moderate", "rough"] },
+                clarity: { type: "string", enum: ["clear", "slightly murky", "murky", "very murky"] },
+                temperature_effect: { type: "string" }
+              }
+            },
+            best_times: { type: "array", items: { type: "string" } },
+            species_forecast: {
+              type: "array",
+              items: {
+                type: "object",
+                properties: {
+                  species: { type: "string" },
+                  activity_level: { type: "string", enum: ["high", "moderate", "low"] },
+                  recommended_depth: { type: "string" },
+                  preferred_bait: { type: "string" }
+                }
+              }
+            },
+            bait_recommendations: {
+              type: "object",
+              properties: {
+                live_bait: { type: "array", items: { type: "string" } },
+                lures: { type: "array", items: { type: "string" } },
+                techniques: { type: "array", items: { type: "string" } }
+              }
+            },
+            tide_info: {
+              type: "object",
+              properties: {
+                current_phase: { type: "string" },
+                next_change: { type: "string" },
+                best_tide_times: { type: "array", items: { type: "string" } }
+              }
+            },
+            moon_phase: {
+              type: "object",
+              properties: {
+                current_phase: { type: "string" },
+                effect_on_fishing: { type: "string" }
+              }
+            },
+            safety_notes: { type: "array", items: { type: "string" } },
+            location_specific_tips: { type: "array", items: { type: "string" } }
+          },
+          required: ["overall_rating", "score", "pressure_analysis", "water_conditions", "best_times"]
+        }
+      });
+
+      if (response) {
+        setFishingData(response);
+        setLastUpdated(new Date());
+      }
+    } catch (error) {
+      console.error('Error fetching fishing conditions:', error);
+      // Fallback to basic analysis
+      setFishingData(generateBasicFishingData());
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const generateBasicFishingData = () => {
+    // Basic fishing analysis based on weather data
+    const pressure = weatherData?.pressure || 1013;
+    const windSpeed = weatherData?.wind_speed || 0;
+    const temp = weatherData?.current_temp || 20;
+
+    let rating = 'Fair';
+    let score = 5;
+
+    // Pressure analysis
+    if (pressure > 1020) {
+      rating = 'Good';
+      score = 7;
+    } else if (pressure < 1000) {
+      rating = 'Poor';
+      score = 3;
+    }
+
+    // Wind adjustment
+    if (windSpeed > 25) {
+      score = Math.max(1, score - 2);
+      rating = 'Poor';
+    } else if (windSpeed < 10) {
+      score = Math.min(10, score + 1);
+    }
+
+    return {
+      overall_rating: rating,
+      score: score,
+      pressure_analysis: {
+        trend: 'steady',
+        effect_on_fish: pressure > 1015 ? 'Stable pressure generally good for fishing' : 'Low pressure may reduce fish activity',
+        ideal_pressure_range: '1015-1025 hPa'
+      },
+      water_conditions: {
+        surface: windSpeed < 10 ? 'calm' : windSpeed < 20 ? 'light chop' : 'moderate',
+        clarity: 'clear',
+        temperature_effect: temp > 25 ? 'Warm water - fish may be deeper' : 'Good temperature for surface activity'
+      },
+      best_times: ['6:00 AM - 8:00 AM', '5:00 PM - 7:00 PM'],
+      safety_notes: windSpeed > 20 ? ['High winds - exercise caution on water'] : ['Good conditions for safe fishing']
+    };
+  };
+
+  useEffect(() => {
+    if (weatherData?.location) {
+      fetchFishingConditions();
+    }
+  }, [weatherData?.location]);
+
+  if (!weatherData) return null;
+
+  const getRatingColor = (rating) => {
+    switch (rating) {
+      case 'Excellent':return 'bg-green-100 text-green-800 border-green-200 dark:bg-green-900/20 dark:text-green-200';
+      case 'Good':return 'bg-blue-100 text-blue-800 border-blue-200 dark:bg-blue-900/20 dark:text-blue-200';
+      case 'Fair':return 'bg-yellow-100 text-yellow-800 border-yellow-200 dark:bg-yellow-900/20 dark:text-yellow-200';
+      case 'Poor':return 'bg-red-100 text-red-800 border-red-200 dark:bg-red-900/20 dark:text-red-200';
+      default:return 'bg-gray-100 text-gray-800 border-gray-200 dark:bg-gray-900/20 dark:text-gray-200';
+    }
+  };
+
+  const getPressureIcon = (trend) => {
+    switch (trend) {
+      case 'rising':return <TrendingUp className="w-4 h-4 text-green-600" />;
+      case 'falling':return <TrendingDown className="w-4 h-4 text-red-600" />;
+      default:return <Minus className="w-4 h-4 text-gray-600" />;
+    }
+  };
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 20 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.6, delay: 0.6 }}>
+
+      <Card className={`${theme === 'dark' ? 'glass-effect-dark' : 'glass-effect-light'} border-white/20`}>
+        <CardHeader>
+          <div className="flex items-center justify-between">
+            <CardTitle className="flex items-center space-x-2 text-gray-900 dark:text-white">
+              <Fish className="w-5 h-5 text-blue-600" />
+              <span>Fishing Conditions</span>
+            </CardTitle>
+            <Button
+              onClick={fetchFishingConditions}
+              disabled={isLoading}
+              variant="outline"
+              size="sm" className="bg-slate-950 text-slate-50 px-3 text-sm font-medium inline-flex items-center justify-center gap-2 whitespace-nowrap ring-offset-background transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:size-4 [&_svg]:shrink-0 border border-input hover:bg-accent hover:text-accent-foreground h-9 rounded-md">
+
+
+              <RefreshCw className={`w-4 h-4 ${isLoading ? 'animate-spin' : ''}`} />
+            </Button>
+          </div>
+          {lastUpdated &&
+          <p className="text-xs text-gray-600 dark:text-gray-400">
+              Last updated: {lastUpdated.toLocaleTimeString()}
+            </p>
+          }
+        </CardHeader>
+        <CardContent>
+          {isLoading && !fishingData ?
+          <div className="h-48 flex items-center justify-center">
+              <div className="text-center">
+                <Loader2 className="w-8 h-8 animate-spin mx-auto mb-2 text-blue-500" />
+                <p className="text-sm text-gray-600 dark:text-gray-400">Analyzing fishing conditions...</p>
+              </div>
+            </div> :
+          fishingData ?
+          <div className="space-y-6">
+              {/* Overall Rating */}
+              <div className="flex items-center justify-between">
+                <div className="flex items-center space-x-3">
+                  <Badge className={`${getRatingColor(fishingData.overall_rating)} font-semibold px-4 py-2`}>
+                    {fishingData.overall_rating}
+                  </Badge>
+                  <div className="text-slate-50 font-bold dark:text-white">
+                    {fishingData.score}/10
+                  </div>
+                </div>
+                <Fish className="w-8 h-8 text-blue-500" />
+              </div>
+
+              {/* Pressure Analysis */}
+              <div className={`p-4 rounded-lg ${theme === 'dark' ? 'bg-gray-800/30' : 'bg-gray-50'}`}>
+                <div className="flex items-center justify-between mb-2">
+                  <h4 className="font-semibold text-gray-900 dark:text-white">Barometric Pressure</h4>
+                  {getPressureIcon(fishingData.pressure_analysis?.trend)}
+                </div>
+                <p className="text-sm text-gray-600 dark:text-gray-400 mb-2">
+                  {fishingData.pressure_analysis?.effect_on_fish}
+                </p>
+                <div className="text-xs text-gray-500 dark:text-gray-500">
+                  Ideal range: {fishingData.pressure_analysis?.ideal_pressure_range}
+                </div>
+              </div>
+
+              {/* Water Conditions */}
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div className={`p-3 rounded-lg text-center ${theme === 'dark' ? 'bg-gray-800/30' : 'bg-gray-50'}`}>
+                  <Waves className="w-5 h-5 mx-auto mb-2 text-blue-500" />
+                  <div className="font-semibold text-sm text-gray-900 dark:text-white capitalize">
+                    {fishingData.water_conditions?.surface || 'Calm'}
+                  </div>
+                  <div className="text-xs text-gray-600 dark:text-gray-400">Surface</div>
+                </div>
+
+                <div className={`p-3 rounded-lg text-center ${theme === 'dark' ? 'bg-gray-800/30' : 'bg-gray-50'}`}>
+                  <div className="w-5 h-5 mx-auto mb-2 bg-blue-500 rounded-full opacity-80"></div>
+                  <div className="font-semibold text-sm text-gray-900 dark:text-white capitalize">
+                    {fishingData.water_conditions?.clarity || 'Clear'}
+                  </div>
+                  <div className="text-xs text-gray-600 dark:text-gray-400">Clarity</div>
+                </div>
+
+                <div className={`p-3 rounded-lg text-center ${theme === 'dark' ? 'bg-gray-800/30' : 'bg-gray-50'}`}>
+                  <div className="text-slate-50 mb-2 text-lg">{weatherData.current_temp}°C</div>
+                  <div className="text-xs text-gray-600 dark:text-gray-400">Water Temp</div>
+                </div>
+              </div>
+
+              {/* Best Times */}
+              {fishingData.best_times && fishingData.best_times.length > 0 &&
+            <div className={`p-4 rounded-lg border ${
+            theme === 'dark' ?
+            'border-gray-700 bg-blue-900/20' :
+            'border-blue-200 bg-blue-50/50'}`
+            }>
+                  <div className="flex items-center space-x-2 mb-3">
+                    <Clock className="w-4 h-4 text-blue-500" />
+                    <span className="font-medium text-gray-900 dark:text-white">Best Fishing Times</span>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    {fishingData.best_times.map((time, index) =>
+                <Badge key={index} variant="outline" className="text-slate-50 px-2.5 py-0.5 text-xs font-semibold inline-flex items-center rounded-full border transition-colors focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 justify-center">
+                        {time}
+                      </Badge>
+                )}
+                  </div>
+                </div>
+            }
+
+              {/* Species Forecast */}
+              {fishingData.species_forecast && fishingData.species_forecast.length > 0 &&
+            <div>
+                  <h4 className="font-semibold text-gray-900 dark:text-white mb-3">Species Activity</h4>
+                  <div className="space-y-2">
+                    {fishingData.species_forecast.slice(0, 4).map((species, index) =>
+                <div key={index} className={`p-3 rounded-lg ${theme === 'dark' ? 'bg-gray-800/20' : 'bg-gray-50/50'}`}>
+                        <div className="flex items-center justify-between mb-1">
+                          <span className="text-slate-50 font-medium dark:text-white">{species.species}</span>
+                          <Badge
+                      variant="outline"
+                      className={`text-xs ${
+                      species.activity_level === 'high' ? 'border-green-500 text-green-600' :
+                      species.activity_level === 'moderate' ? 'border-yellow-500 text-yellow-600' :
+                      'border-red-500 text-red-600'}`
+                      }>
+
+                            {species.activity_level}
+                          </Badge>
+                        </div>
+                        <div className="text-xs text-gray-600 dark:text-gray-400">
+                          Depth: {species.recommended_depth} • Bait: {species.preferred_bait}
+                        </div>
+                      </div>
+                )}
+                  </div>
+                </div>
+            }
+
+              {/* Bait Recommendations */}
+              {fishingData.bait_recommendations &&
+            <div className={`p-4 rounded-lg ${theme === 'dark' ? 'bg-green-900/20' : 'bg-green-50/50'} border border-green-200 dark:border-green-800`}>
+                  <h4 className="font-semibold text-gray-900 dark:text-white mb-3">Recommended Baits & Techniques</h4>
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-sm">
+                    {fishingData.bait_recommendations.live_bait &&
+                <div>
+                        <span className="font-medium text-green-800 dark:text-green-200">Live Bait:</span>
+                        <ul className="text-gray-600 dark:text-gray-400 mt-1">
+                          {fishingData.bait_recommendations.live_bait.slice(0, 3).map((bait, i) =>
+                    <li key={i} className="text-xs">• {bait}</li>
+                    )}
+                        </ul>
+                      </div>
+                }
+                    {fishingData.bait_recommendations.lures &&
+                <div>
+                        <span className="font-medium text-green-800 dark:text-green-200">Lures:</span>
+                        <ul className="text-gray-600 dark:text-gray-400 mt-1">
+                          {fishingData.bait_recommendations.lures.slice(0, 3).map((lure, i) =>
+                    <li key={i} className="text-xs">• {lure}</li>
+                    )}
+                        </ul>
+                      </div>
+                }
+                    {fishingData.bait_recommendations.techniques &&
+                <div>
+                        <span className="font-medium text-green-800 dark:text-green-200">Techniques:</span>
+                        <ul className="text-gray-600 dark:text-gray-400 mt-1">
+                          {fishingData.bait_recommendations.techniques.slice(0, 3).map((technique, i) =>
+                    <li key={i} className="text-xs">• {technique}</li>
+                    )}
+                        </ul>
+                      </div>
+                }
+                  </div>
+                </div>
+            }
+
+              {/* Tides & Moon Phase */}
+              {(fishingData.tide_info || fishingData.moon_phase) &&
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {fishingData.tide_info &&
+              <div className={`p-4 rounded-lg ${theme === 'dark' ? 'bg-blue-900/20' : 'bg-blue-50/50'}`}>
+                      <div className="flex items-center space-x-2 mb-2">
+                        <Waves className="w-4 h-4 text-blue-500" />
+                        <span className="font-medium text-gray-900 dark:text-white">Tide Information</span>
+                      </div>
+                      <div className="text-sm text-gray-600 dark:text-gray-400">
+                        <p>Current: {fishingData.tide_info.current_phase}</p>
+                        {fishingData.tide_info.next_change &&
+                  <p>Next: {fishingData.tide_info.next_change}</p>
+                  }
+                      </div>
+                    </div>
+              }
+                  
+                  {fishingData.moon_phase &&
+              <div className={`p-4 rounded-lg ${theme === 'dark' ? 'bg-purple-900/20' : 'bg-purple-50/50'}`}>
+                      <div className="flex items-center space-x-2 mb-2">
+                        <Moon className="w-4 h-4 text-purple-500" />
+                        <span className="font-medium text-gray-900 dark:text-white">Moon Phase</span>
+                      </div>
+                      <div className="text-sm text-gray-600 dark:text-gray-400">
+                        <p>{fishingData.moon_phase.current_phase}</p>
+                        <p className="text-xs mt-1">{fishingData.moon_phase.effect_on_fishing}</p>
+                      </div>
+                    </div>
+              }
+                </div>
+            }
+
+              {/* Safety Notes */}
+              {fishingData.safety_notes && fishingData.safety_notes.length > 0 &&
+            <div className={`p-4 rounded-lg border ${
+            theme === 'dark' ?
+            'border-orange-700 bg-orange-900/20' :
+            'border-orange-200 bg-orange-50/50'}`
+            }>
+                  <h4 className="font-semibold text-orange-800 dark:text-orange-200 mb-2">Safety Considerations</h4>
+                  <ul className="text-sm text-orange-700 dark:text-orange-300 space-y-1">
+                    {fishingData.safety_notes.map((note, index) =>
+                <li key={index} className="flex items-start">
+                        <span className="w-2 h-2 bg-orange-500 rounded-full mt-2 mr-2 flex-shrink-0" />
+                        {note}
+                      </li>
+                )}
+                  </ul>
+                </div>
+            }
+            </div> :
+
+          <div className="h-32 flex items-center justify-center">
+              <div className="text-center text-gray-600 dark:text-gray-400">
+                <Fish className="w-8 h-8 mx-auto mb-2 opacity-50" />
+                <p className="text-sm">Unable to load fishing conditions</p>
+                <Button onClick={fetchFishingConditions} variant="ghost" size="sm" className="mt-2">
+                  Try again
+                </Button>
+              </div>
+            </div>
+          }
+        </CardContent>
+      </Card>
+    </motion.div>);
