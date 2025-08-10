@@ -1,0 +1,108 @@
+import React from 'react';
+import { motion } from 'framer-motion';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Badge } from '@/components/ui/badge';
+import { Droplets, TrendingDown, AlertTriangle, Calendar, Loader2, Info } from 'lucide-react';
+import { useTheme } from '../theme/ThemeProvider';
+
+const droughtLevels = {
+  'None': { bg: 'bg-green-100 text-green-800', text: 'text-green-200', color: '#22c55e', icon: '💧' },
+  'Abnormally Dry': { bg: 'bg-yellow-100 text-yellow-800', text: 'text-yellow-200', color: '#eab308', icon: '🌾' },
+  'Moderate Drought': { bg: 'bg-orange-100 text-orange-800', text: 'text-orange-200', color: '#f97316', icon: '🔶' },
+  'Severe Drought': { bg: 'bg-red-100 text-red-800', text: 'text-red-200', color: '#ef4444', icon: '🔴' },
+  'Extreme Drought': { bg: 'bg-purple-100 text-purple-800', text: 'text-purple-200', color: '#a855f7', icon: '🟣' },
+  'Exceptional Drought': { bg: 'bg-gray-900', text: 'text-white', color: '#1f2937', icon: '⚫' },
+  'Unknown': { bg: 'bg-gray-100 text-gray-800', text: 'text-gray-200', color: '#6b7280', icon: '❔' }
+};
+
+export default function DroughtMonitor({ droughtData }) {
+  const { theme } = useTheme();
+
+  if (!droughtData) {
+    return (
+        <Card className="glass-effect-dark border-white/20">
+            <CardHeader>
+                <CardTitle className="flex items-center space-x-2 text-white">
+                    <Droplets className="w-5 h-5 text-blue-400" />
+                    <span>Drought Monitor</span>
+                </CardTitle>
+            </CardHeader>
+            <CardContent className="h-48 flex items-center justify-center">
+                <div className="text-center text-white/60">
+                    <Loader2 className="w-8 h-8 animate-spin mx-auto mb-2" />
+                    <p className="text-sm">Loading drought data...</p>
+                </div>
+            </CardContent>
+        </Card>
+    );
+  }
+
+  const { level, rainfall_deficit, last_significant_rain } = droughtData;
+  const colors = droughtLevels[level] || droughtLevels['Unknown'];
+
+  const getDroughtDescription = (level) => {
+    switch (level) {
+      case 'Exceptional Drought':
+        return "Exceptional drought conditions. Widespread water restrictions and agricultural losses expected.";
+      case 'Extreme Drought':
+        return "Extreme drought conditions. Severe water shortages and crop stress likely.";
+      case 'Severe Drought':
+        return "Severe drought conditions. Water restrictions may be implemented.";
+      case 'Moderate Drought':
+        return "Moderate drought conditions. Some water stress on crops and pastures.";
+      case 'Abnormally Dry':
+        return "Abnormally dry conditions. Monitor for potential drought development.";
+      case 'None':
+        return "No drought conditions detected. Normal precipitation levels.";
+      default:
+        return "Drought status information unavailable.";
+    }
+  };
+
+  const formatRainfallDeficit = (deficit) => {
+    if (deficit === null || deficit === undefined) return 'N/A';
+    if (typeof deficit === 'number') return `${deficit.toFixed(1)}%`;
+    return String(deficit);
+  };
+
+  const formatLastRain = (lastRain) => {
+    if (!lastRain) return 'N/A';
+    return String(lastRain);
+  };
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 20 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.6, delay: 0.8 }}
+    >
+      <Card className="glass-effect-dark border-white/20">
+        <CardHeader>
+          <CardTitle className="flex items-center space-x-2 text-white">
+            <Droplets className="w-5 h-5 text-blue-400" />
+            <span>Drought Monitor</span>
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center space-x-3">
+              <Badge className={`${colors.bg} font-bold px-4 py-2 text-sm`}>
+                <span className="mr-2">{colors.icon}</span>
+                {level}
+              </Badge>
+              {level !== 'None' && level !== 'Unknown' && (
+                <AlertTriangle className="w-6 h-6 text-orange-400" />
+              )}
+            </div>
+            <TrendingDown className="w-8 h-8" style={{ color: colors.color }} />
+          </div>
+          
+          <div className="bg-gray-800/30 p-4 rounded-lg">
+            <div className="text-center">
+              <div className="font-bold text-2xl text-white mb-1">
+                {formatRainfallDeficit(rainfall_deficit)}
+              </div>
+              <div className="text-sm text-white/60">Rainfall Deficit</div>
+            </div>
+          </div>
+
