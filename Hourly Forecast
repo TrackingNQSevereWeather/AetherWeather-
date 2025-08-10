@@ -1,0 +1,67 @@
+import React, { useState, useRef } from "react";
+import { motion } from "framer-motion";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Clock, Sun, Cloud, CloudRain, Snowflake, Zap as Thunderstorm, ChevronLeft, ChevronRight } from "lucide-react";
+import { useTheme } from "../theme/ThemeProvider";
+
+const weatherIcons = {
+  sunny: Sun,
+  cloudy: Cloud,
+  rainy: CloudRain,
+  snowy: Snowflake,
+  thunderstorm: Thunderstorm,
+  clear: Sun
+};
+
+export default function HourlyForecast({ hourlyData }) {
+  const { temperatureUnit } = useTheme();
+  const scrollContainerRef = useRef(null);
+  const [canScrollLeft, setCanScrollLeft] = useState(false);
+  const [canScrollRight, setCanScrollRight] = useState(true);
+
+  const convertTemp = (celsius) => {
+    if (temperatureUnit === 'fahrenheit') {
+      return Math.round(celsius * 9 / 5 + 32);
+    }
+    return Math.round(celsius);
+  };
+
+  const checkScrollButtons = () => {
+    if (scrollContainerRef.current) {
+      const { scrollLeft, scrollWidth, clientWidth } = scrollContainerRef.current;
+      setCanScrollLeft(scrollLeft > 0);
+      // Check if there's still content to scroll to the right, allowing for a small buffer
+      setCanScrollRight(scrollLeft + clientWidth < scrollWidth - 1);
+    }
+  };
+
+  const scrollLeft = () => {
+    if (scrollContainerRef.current) {
+      scrollContainerRef.current.scrollBy({ left: -300, behavior: 'smooth' });
+      // Use setTimeout to allow scroll animation to complete before re-checking
+      setTimeout(checkScrollButtons, 300);
+    }
+  };
+
+  const scrollRight = () => {
+    if (scrollContainerRef.current) {
+      scrollContainerRef.current.scrollBy({ left: 300, behavior: 'smooth' });
+      // Use setTimeout to allow scroll animation to complete before re-checking
+      setTimeout(checkScrollButtons, 300);
+    }
+  };
+
+  React.useEffect(() => {
+    checkScrollButtons();
+    const handleResize = () => checkScrollButtons();
+    window.addEventListener('resize', handleResize);
+
+    // Initial check after rendering
+    const currentRef = scrollContainerRef.current;
+    if (currentRef) {
+      // Add a small delay to ensure content is rendered and scrollWidth is accurate
+      const observer = new ResizeObserver(() => checkScrollButtons());
+      observer.observe(currentRef);
+      // Also observe the body to react to general layout changes that might affect scrollability
+ 
