@@ -1,0 +1,379 @@
+
+import React from 'react';
+
+// WeatherAPI.com configuration
+const API_KEY = '193da878084c492ead5125630251007';
+const BASE_URL = 'https://api.weatherapi.com/v1';
+
+export class WeatherAPI {
+  /**
+   * Fetches combined weather data from WeatherAPI.com.
+   * @param {string} query - Location query (e.g., "Townsville", "lat,lon").
+   * @returns {Promise<object>} - The API response data.
+   */
+  static async getCombinedWeatherData(query) {
+    try {
+      const response = await fetch(
+        `${BASE_URL}/forecast.json?key=${API_KEY}&q=${encodeURIComponent(query)}&days=7&aqi=yes&alerts=yes`
+      );
+      const data = await response.json();
+
+      if (data.error) {
+        throw new Error(data.error.message);
+      }
+      return data;
+    } catch (error) {
+      console.error(`Error fetching combined weather data for ${query}:`, error);
+      throw error;
+    }
+  }
+
+  static async getCurrentWeather(lat, lon) {
+    try {
+      const data = await this.getCombinedWeatherData(`${lat},${lon}`);
+      return this.formatCurrentWeather(data);
+    } catch (error) {
+      console.warn('Error fetching current weather, using fallback:', error.message);
+      return this.getFallbackCurrentWeather(lat, lon);
+    }
+  }
+
+  static async getForecast(lat, lon) {
+    try {
+      const data = await this.getCombinedWeatherData(`${lat},${lon}`);
+      return this.formatForecast(data);
+    } catch (error) {
+      console.warn('Error fetching forecast, using fallback:', error.message);
+      return this.getFallbackForecast(lat, lon);
+    }
+  }
+
+  static async getAirQuality(lat, lon) {
+    try {
+      const data = await this.getCombinedWeatherData(`${lat},${lon}`);
+      return this.formatAirQuality(data);
+    } catch (error) {
+      console.warn('Error fetching air quality, using fallback:', error.message);
+      return this.getFallbackAirQuality();
+    }
+  }
+
+  static async searchLocation(query) {
+    try {
+      const response = await fetch(
+        `${BASE_URL}/search.json?key=${API_KEY}&q=${encodeURIComponent(query)}`
+      );
+      const data = await response.json();
+
+      if (data.error) {
+        throw new Error(data.error.message);
+      }
+      
+      // If no results found, return fallback locations
+      if (!data || data.length === 0) {
+        console.warn('No locations found from API, using fallback search');
+        return this.getFallbackLocationSearch(query);
+      }
+      
+      return data.map(location => ({
+        name: this.formatLocationName(location),
+        lat: location.lat,
+        lon: location.lon,
+        state: location.region,
+        country: location.country
+      }));
+    } catch (error) {
+      console.warn('Error searching location, using fallback:', error.message);
+      return this.getFallbackLocationSearch(query);
+    }
+  }
+
+  static async reverseGeocode(lat, lon) {
+    try {
+      const response = await fetch(
+        `${BASE_URL}/search.json?key=${API_KEY}&q=${lat},${lon}`
+      );
+      const data = await response.json();
+      if (data.error || !data || data.length === 0) {
+        return this.getLocationNameFromCoords(lat, lon);
+      }
+      return this.formatLocationName(data[0]);
+    } catch (error) {
+      console.warn('Error with reverse geocoding:', error.message);
+      return this.getLocationNameFromCoords(lat, lon);
+    }
+  }
+
+  // --- Data Formatters ---
+
+  static formatCurrentWeather(data) {
+    const { location, current, forecast } = data;
+    const todayAstro = forecast.forecastday[0].astro;
+
+    const now = new Date();
+    const currentHourData = forecast.forecastday[0].hour.find(h => new Date(h.time_epoch * 1000).getHours() === now.getHours());
+
+    return {
+      location: this.formatLocationName(location),
+      latitude: location.lat,
+      longitude: location.lon,
+      current_temp: Math.round(current.temp_c),
+      feels_like: Math.round(current.feelslike_c),
+      condition: this.mapCondition(current.condition.text),
+      description: current.condition.text,
+      humidity: current.humidity,
+      dew_point: currentHourData ? Math.round(currentHourData.dewpoint_c) : 0,
+      wind_speed: Math.round(current.wind_kph),
+      wind_direction: current.wind_dir,
+      wind_gust: Math.round(current.gust_kph),
+      visibility: Math.round(current.vis_km),
+      pressure: Math.round(current.pressure_mb),
+      pressure_trend: 'steady',
+      uv_index: Math.round(current.uv),
+      weather_icon: current.condition.icon,
+      sunrise: new Date(`${forecast.forecastday[0].date} ${todayAstro.sunrise}`),
+      sunset: new Date(`${forecast.forecastday[0].date} ${todayAstro.sunset}`),
+    };
+  }
+
+  static formatForecast(data) {
+    const { forecast } = data;
+    const forecasts = [];
+    const hourlyData = [];
+
+    // Daily Forecast
+    forecast.forecastday.forEach(day => {
+      forecasts.push({
+        date: day.date,
+        high: Math.round(day.day.maxtemp_c),
+        low: Math.round(day.day.mintemp_c),
+        condition: this.mapCondition(day.day.condition.text),
+        precipitation: Math.round(day.day.daily_chance_of_rain),
+        rainfall_mm: day.day.totalprecip_mm,
+        wind_speed: Math.round(day.day.maxwind_kph),
+        wind_direction: 'N/A',
+        humidity: Math.round(day.day.avghumidity),
+        uv_index: Math.round(day.day.uv),
+        weather_icon: day.day.condition.icon,
+      });
+    });
+
+    // Hourly Forecast (next 24 hours)
+    const now = new Date();
+    const currentHour = now.getHours();
+    
+    const todayHours = forecast.forecastday[0].hour.filter(h => new Date(h.time_epoch * 1000).getHours() >= currentHour);
+    const tomorrowHours = forecast.forecastday[1] ? forecast.forecastday[1].hour : [];
+    const combinedHours = [...todayHours, ...tomorrowHours].slice(0, 24);
+
+    combinedHours.forEach(hour => {
+      hourlyData.push({
+        time: new Date(hour.time_epoch * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false }),
+        temp: Math.round(hour.temp_c),
+        condition: this.mapCondition(hour.condition.text),
+        precipitation: Math.round(hour.chance_of_rain),
+        humidity: hour.humidity,
+        dew_point: Math.round(hour.dewpoint_c),
+        wind_speed: Math.round(hour.wind_kph),
+        pressure: Math.round(hour.pressure_mb),
+        weather_icon: hour.condition.icon,
+      });
+    });
+
+    return { forecasts, hourlyData };
+  }
+
+  static formatAirQuality(data) {
+    if (!data.current.air_quality) return this.getFallbackAirQuality();
+    
+    const { air_quality } = data.current;
+    const aqi = air_quality['us-epa-index'];
+    const aqi_categories = ['Good', 'Moderate', 'Unhealthy for Sensitive Groups', 'Unhealthy', 'Very Unhealthy', 'Hazardous'];
+
+    return {
+      aqi: aqi,
+      category: aqi_categories[aqi - 1] || 'Unknown',
+      pm25: Math.round(air_quality.pm2_5 || 0),
+      pm10: Math.round(air_quality.pm10 || 0),
+      o3: Math.round(air_quality.o3 || 0),
+      no2: Math.round(air_quality.no2 || 0),
+      so2: Math.round(air_quality.so2 || 0),
+      co: Math.round(air_quality.co || 0)
+    };
+  }
+
+  static formatAlerts(data) {
+    if (!data?.alerts?.alert?.length) {
+      return [];
+    }
+
+    return data.alerts.alert.map(a => ({
+      title: a.headline,
+      severity: (a.severity || 'minor').toLowerCase(),
+      type: (a.category || 'default').toLowerCase().replace(/\s/g, ''),
+      source: 'Weather Service', // API doesn't specify source, so using a generic one
+      description: a.desc || a.instruction,
+      issued_time: a.effective,
+      expires_time: a.expires,
+      areas: a.areas ? a.areas.split(';').map(s => s.trim()) : [],
+      alert_id: a.headline + a.effective, // Create a semi-unique ID
+    }));
+  }
+
+  // --- Helper Methods ---
+
+  static mapCondition(conditionText) {
+    const text = conditionText.toLowerCase();
+    if (text.includes('rain') || text.includes('drizzle')) return 'rainy';
+    if (text.includes('snow') || text.includes('sleet') || text.includes('ice')) return 'snowy';
+    if (text.includes('cloudy') || text.includes('overcast')) return 'cloudy';
+    if (text.includes('thunder')) return 'thunderstorm';
+    if (text.includes('sunny') || text.includes('clear')) return 'sunny';
+    if (text.includes('mist') || text.includes('fog')) return 'cloudy';
+    return 'cloudy'; // Default for other conditions
+  }
+
+  static formatLocationName(location) {
+    let name = location.name;
+    if (location.region && location.region !== location.name) {
+      name += `, ${location.region}`;
+    }
+    if (location.country) {
+      if (location.country === 'United States of America') {
+        name += `, USA`;
+      } else if (location.country !== location.name) {
+        name += `, ${location.country}`;
+      }
+    }
+    return name;
+  }
+  
+  // --- Fallback Methods (Unchanged) ---
+  static getFallbackCurrentWeather(lat, lon) {
+    const locationName = this.getLocationNameFromCoords(lat, lon);
+    const baseTemp = this.getSeasonalBaseTemp(lat);
+    
+    return {
+      location: locationName,
+      latitude: lat,
+      longitude: lon,
+      current_temp: Math.round(baseTemp + (Math.random() * 6 - 3)),
+      feels_like: Math.round(baseTemp + (Math.random() * 8 - 4)),
+      condition: this.getRandomCondition(),
+      description: "partly cloudy",
+      humidity: Math.round(40 + Math.random() * 40),
+      dew_point: Math.round(baseTemp - 5 + Math.random() * 8),
+      wind_speed: Math.round(5 + Math.random() * 20),
+      wind_direction: this.getRandomWindDirection(),
+      wind_gust: Math.round(Math.random() * 15),
+      visibility: Math.round(8 + Math.random() * 7),
+      pressure: Math.round(1010 + Math.random() * 20),
+      pressure_trend: 'steady',
+      uv_index: Math.round(Math.random() * 11),
+      weather_icon: "02d",
+      sunrise: new Date(Date.now() + 6 * 60 * 60 * 1000),
+      sunset: new Date(Date.now() + 18 * 60 * 60 * 1000)
+    };
+  }
+
+  static getFallbackForecast(lat, lon) {
+    const baseTemp = this.getSeasonalBaseTemp(lat);
+    const forecasts = [];
+    const hourlyData = [];
+
+    for (let i = 0; i < 7; i++) {
+      const date = new Date();
+      date.setDate(date.getDate() + i);
+      forecasts.push({
+        date: date.toISOString().split('T')[0],
+        high: Math.round(baseTemp + 3 + (Math.random() * 6 - 3)),
+        low: Math.round(baseTemp - 5 + (Math.random() * 6 - 3)),
+        condition: this.getRandomCondition(),
+        precipitation: Math.round(Math.random() * 60),
+        // No rainfall_mm in fallback as it's not a direct fallback for that specific API field
+        wind_speed: Math.round(10 + Math.random() * 15),
+        wind_direction: this.getRandomWindDirection(),
+        humidity: Math.round(50 + Math.random() * 30),
+        uv_index: Math.round(3 + Math.random() * 8)
+      });
+    }
+
+    for (let i = 0; i < 24; i++) {
+      const hour = (new Date().getHours() + i) % 24;
+      hourlyData.push({
+        time: `${hour.toString().padStart(2, '0')}:00`,
+        temp: Math.round(baseTemp + (Math.random() * 8 - 4)),
+        condition: this.getRandomCondition(),
+        precipitation: Math.round(Math.random() * 40),
+        humidity: Math.round(45 + Math.random() * 35),
+        dew_point: Math.round(baseTemp - 8 + Math.random() * 10),
+        wind_speed: Math.round(8 + Math.random() * 12),
+        pressure: Math.round(1012 + Math.random() * 16)
+      });
+    }
+
+    return { forecasts, hourlyData };
+  }
+
+  static getFallbackAirQuality() {
+    return {
+      aqi: Math.floor(1 + Math.random() * 3),
+      category: ['Good', 'Fair', 'Moderate'][Math.floor(Math.random() * 3)],
+      pm25: Math.round(5 + Math.random() * 25),
+      pm10: Math.round(10 + Math.random() * 35),
+      o3: Math.round(50 + Math.random() * 50),
+      no2: Math.round(10 + Math.random() * 30),
+      so2: Math.round(5 + Math.random() * 15),
+      co: Math.round(200 + Math.random() * 300)
+    };
+  }
+
+  static getFallbackLocationSearch(query) {
+    const commonLocations = [
+      { name: "Townsville, QLD, Australia", lat: -19.2590, lon: 146.8169 },
+      { name: "Brisbane, QLD, Australia", lat: -27.4705, lon: 153.0260 },
+      { name: "Sydney, NSW, Australia", lat: -33.8688, lon: 151.2093 },
+      { name: "Melbourne, VIC, Australia", lat: -37.8136, lon: 144.9631 },
+      { name: "New York, New York, USA", lat: 40.7128, lon: -74.0060 },
+      { name: "London, City of London, Greater London, UK", lat: 51.5074, lon: -0.1278 },
+      { name: "Los Angeles, California, USA", lat: 34.0522, lon: -118.2437 },
+      { name: "Chicago, Illinois, USA", lat: 41.8781, lon: -87.6298 },
+      { name: "Miami, Florida, USA", lat: 25.7617, lon: -80.1918 },
+      { name: "Toronto, Ontario, Canada", lat: 43.6532, lon: -79.3832 },
+    ];
+    
+    // Filter locations that match the query
+    const filtered = commonLocations.filter(loc => 
+      loc.name.toLowerCase().includes(query.toLowerCase())
+    );
+    
+    // If no matches, return all common locations
+    return filtered.length > 0 ? filtered : commonLocations;
+  }
+
+  static getLocationNameFromCoords(lat, lon) {
+    if (lat > -20 && lat < -16 && lon > 145 && lon < 147) return "Townsville, QLD, Australia";
+    if (lat > -28 && lat < -26 && lon > 152 && lon < 154) return "Brisbane, QLD, Australia";
+    return `Location ${lat.toFixed(2)}, ${lon.toFixed(2)}`;
+  }
+
+  static getSeasonalBaseTemp(lat) {
+    const month = new Date().getMonth();
+    const isNorthernHemisphere = lat > 0;
+    if (Math.abs(lat) < 23.5) return 28;
+    const isWinter = (isNorthernHemisphere && (month < 2 || month > 10)) || (!isNorthernHemisphere && (month > 4 && month < 8));
+    return isWinter ? 5 : 22;
+  }
+
+  static getRandomCondition() {
+    const conditions = ['clear', 'cloudy', 'partly cloudy', 'overcast'];
+    return conditions[Math.floor(Math.random() * conditions.length)];
+  }
+
+  static getRandomWindDirection() {
+    const directions = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'];
+    return directions[Math.floor(Math.random() * directions.length)];
+  }
+}
+
+export default WeatherAPI;
