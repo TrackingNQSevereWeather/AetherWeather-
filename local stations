@@ -1,0 +1,253 @@
+import React, { useState, useEffect, useCallback } from 'react';
+import { motion } from 'framer-motion';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
+import { useTheme } from '../theme/ThemeProvider';
+import { RadioTower, Thermometer, Wind, Gauge, Droplets, RefreshCw, MapPin } from 'lucide-react';
+import { InvokeLLM } from '@/integrations/Core';
+import { format } from 'date-fns';
+
+export default function LocalStations({ weatherData }) {
+  const { theme, temperatureUnit } = useTheme();
+  const [localStations, setLocalStations] = useState([]);
+  const [isLoading, setIsLoading] = useState(false);
+  const [dataSource, setDataSource] = useState('');
+  const [lastUpdated, setLastUpdated] = useState(null);
+
+  const convertTemp = useCallback((celsius) => {
+    if (temperatureUnit === 'fahrenheit') {
+      return Math.round(celsius * 9 / 5 + 32);
+    }
+    return Math.round(celsius);
+  }, [temperatureUnit]);
+
+  const fetchLocalStations = useCallback(async () => {
+    if (!weatherData?.location) return;
+
+    setIsLoading(true);
+    try {
+      const response = await InvokeLLM({
+        prompt: `CRITICAL: You must provide ACCURATE current weather station data for ${weatherData.location}. 
+
+For USA locations like Tulsa, Oklahoma:
+1. Find a variety of weather stations including:
+   - Official NWS/NOAA cooperative observer stations
+   - University weather stations
+   - Municipal weather stations
+   - Agricultural weather stations
+   - RAWS (Remote Automated Weather Stations)
+   - Marine/lake stations if applicable
+   - Emergency management stations
+2. Avoid selecting ONLY airports - include diverse station types
+3. Extract the EXACT current temperature, humidity, wind, and pressure readings as shown on official sources RIGHT NOW
+4. Use the National Weather Service current conditions and observation networks
+5. Cross-reference with NOAA's Climate Data Online and Mesonet networks
+
+For other countries, use their official weather services with similar diversity.
+
+The current temperature should be realistic for the current season and time of day.
+
+Return up to 5 diverse weather stations with their CURRENT, ACCURATE readings:`,
+        add_context_from_internet: true,
+        response_json_schema: {
+          type: "object",
+          properties: {
+            stations: {
+              type: "array",
+              items: {
+                type: "object",
+                properties: {
+                  name: { type: "string", description: "Official station name and type (e.g., University of Tulsa Weather Station, Tulsa Cooperative Observer)" },
+                  station_type: { type: "string", description: "Type of station (e.g., Cooperative Observer, University, Municipal, Agricultural, RAWS)" },
+                  distance: { type: "number", description: "Distance in km" },
+                  temperature: { type: "number", description: "Current temperature in Celsius - MUST BE ACCURATE" },
+                  humidity: { type: "number", description: "Current humidity percentage" },
+                  dew_point: { type: "number", description: "Current dew point in Celsius" },
+                  wind_speed: { type: "number", description: "Current wind speed in km/h" },
+                  wind_direction: { type: "string", description: "Current wind direction" },
+                  pressure: { type: "number", description: "Current pressure in hPa" },
+                  rainfall_24h: { type: "number", description: "24h rainfall in mm" },
+                  last_observation: { type: "string", description: "Exact observation time from source" }
+                },
+                required: ["name", "station_type", "temperature", "humidity", "wind_speed"]
+              }
+            },
+            data_source: { type: "string", description: "The official weather service used" },
+            verification_note: { type: "string", description: "Note confirming data accuracy and source verification" }
+          },
+          required: ["stations", "data_source"]
+        }
+      });
+
+      if (response?.stations && response.stations.length > 0) {
+        // Validate temperature readings are reasonable
+        const validStations = response.stations.filter((station) => {
+          const temp = station.temperature;
+          // Basic sanity check - temperatures should be between -50°C and 60°C
+          return temp >= -50 && temp <= 60;
+        });
+
+        if (validStations.length > 0) {
+          setLocalStations(validStations);
+          setDataSource(response.data_source);
+          setLastUpdated(new Date());
+        } else {
+          console.error('All station temperatures failed validation');
+          setLocalStations([]);
+        }
+      } else {
+        setLocalStations([]);
+      }
+    } catch (error) {
+      console.error('Error fetching local station data:', error);
+      setLocalStations([]);
+    } finally {
+      setIsLoading(false);
+    }
+  }, [weatherData?.location]);
+
+  useEffect(() => {
+    if (weatherData?.location) {
+      fetchLocalStations();
+
+      const intervalId = setInterval(fetchLocalStations, 180000); // 3 minutes for more frequent updates
+
+      return () => clearInterval(intervalId);
+    }
+  }, [fetchLocalStations, weatherData?.location]);
+
+  if (!weatherData) {
+    return null;
+  }
+
+  if (isLoading && localStations.length === 0) {
+    return (
+      <Card className={`${theme === 'dark' ? 'glass-effect-dark' : 'glass-effect-light'} border-white/20`}>
+        <CardHeader>
+          <CardTitle className="flex items-center space-x-2 text-white">
+            <RadioTower className="w-5 h-5" />
+            <span>Local Weather Stations</span>
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="h-48 flex items-center justify-center">
+          <div className="animate-pulse text-center text-gray-400">
+            <RadioTower className="w-8 h-8 mx-auto mb-2" />
+            <p>Getting accurate station data...</p>
+          </div>
+        </CardContent>
+      </Card>);
+
+  }
+
+  if (localStations.length === 0) {
+    return null;
+  }
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 20 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.6, delay: 0.5 }}>
+
+      <Card className={`${theme === 'dark' ? 'glass-effect-dark' : 'glass-effect-light'} border-white/20`}>
+        <CardHeader>
+          <div className="flex items-center justify-between">
+            <CardTitle className="flex items-center space-x-2 text-white">
+              <RadioTower className="w-5 h-5" />
+              <span>Local Weather Stations</span>
+            </CardTitle>
+            <Button
+              onClick={fetchLocalStations}
+              disabled={isLoading}
+              variant="outline"
+              size="sm"
+              className="bg-slate-950 text-slate-50 px-3 text-sm font-medium inline-flex items-center justify-center gap-2 whitespace-nowrap ring-offset-background transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:size-4 [&_svg]:shrink-0 border border-input hover:bg-accent hover:text-accent-foreground h-9 rounded-md">
+
+              <RefreshCw className={`w-4 h-4 ${isLoading ? 'animate-spin' : ''}`} />
+            </Button>
+          </div>
+          {lastUpdated &&
+          <p className="text-xs text-gray-400">
+              Last updated: {format(lastUpdated, 'h:mm:ss a')}
+            </p>
+          }
+        </CardHeader>
+        <CardContent className="space-y-4">
+          {localStations.map((station, index) =>
+          <motion.div
+            key={index}
+            initial={{ opacity: 0, x: -20 }}
+            animate={{ opacity: 1, x: 0 }}
+            transition={{ duration: 0.5, delay: index * 0.15 }}
+            className={`p-4 rounded-lg border ${
+            theme === 'dark' ?
+            'border-gray-700 bg-gray-800/30' :
+            'border-gray-200 bg-gray-50/50'}`
+            }>
+
+              <div className="flex items-center justify-between mb-3">
+                <div>
+                  <h3 className="font-semibold text-white">{station.name}</h3>
+                  {station.station_type &&
+                <p className="text-xs text-gray-400 mt-1">{station.station_type}</p>
+                }
+                </div>
+                {station.distance &&
+              <div className="flex items-center text-sm text-gray-400">
+                    <MapPin className="w-4 h-4 mr-1" />
+                    {station.distance} km away
+                  </div>
+              }
+              </div>
+              
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 text-center mb-3">
+                <div className="flex flex-col items-center space-y-1">
+                  <Thermometer className="w-5 h-5 text-red-500" />
+                  <span className="text-white text-lg font-bold">{convertTemp(station.temperature)}°</span>
+                  <span className="text-xs text-gray-400">Temp</span>
+                </div>
+                <div className="flex flex-col items-center space-y-1">
+                  <Droplets className="w-5 h-5 text-blue-500" />
+                  <span className="text-white text-lg font-bold">{station.humidity}%</span>
+                  <span className="text-xs text-gray-400">Humidity</span>
+                </div>
+                <div className="flex flex-col items-center space-y-1">
+                  <Wind className="w-5 h-5 text-green-500" />
+                  <span className="text-white text-lg font-bold">{station.wind_speed}</span>
+                  <span className="text-xs text-gray-400">km/h {station.wind_direction}</span>
+                </div>
+                <div className="flex flex-col items-center space-y-1">
+                  <Gauge className="w-5 h-5 text-purple-500" />
+                  <span className="text-white text-lg font-bold">{station.pressure}</span>
+                  <span className="text-xs text-gray-400">hPa</span>
+                </div>
+              </div>
+              
+              <div className="grid grid-cols-2 gap-4 text-sm">
+                <div className="text-gray-400">
+                  <span className="font-medium text-white">Dew Point:</span> {convertTemp(station.dew_point)}°{temperatureUnit === 'celsius' ? 'C' : 'F'}
+                </div>
+                <div className="text-gray-400">
+                  <span className="font-medium text-white">24h Rain:</span> {station.rainfall_24h ?? 'N/A'}mm
+                </div>
+              </div>
+              
+              {station.last_observation &&
+            <div className="mt-2 text-xs text-gray-400">
+                  Last observation: {station.last_observation}
+                </div>
+            }
+            </motion.div>
+          )}
+          
+          {dataSource &&
+          <div className="text-xs text-gray-400 mt-4 p-3 rounded-lg bg-gray-50 dark:bg-gray-800/50">
+              <div className="flex items-center space-x-1">
+                <RadioTower className="w-4 h-4" />
+                <span>Live data from {dataSource}</span>
+              </div>
+            </div>
+          }
+        </CardContent>
+      </Card>
+    </motion.div>);
