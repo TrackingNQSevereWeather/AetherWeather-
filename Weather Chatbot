@@ -1,0 +1,148 @@
+import React, { useState, useRef, useEffect } from 'react';
+import { motion, AnimatePresence } from 'framer-motion';
+import { MessageSquare, Bot, User, Send, X, Loader2 } from 'lucide-react';
+import { Button } from '@/components/ui/button';
+import { Textarea } from '@/components/ui/textarea';
+import { InvokeLLM } from '@/integrations/Core';
+import { useTheme } from '../theme/ThemeProvider';
+
+export default function WeatherChatbot({ weatherData }) {
+  const [isOpen, setIsOpen] = useState(false);
+  const [messages, setMessages] = useState([]);
+  const [input, setInput] = useState('');
+  const [isLoading, setIsLoading] = useState(false);
+  const { theme } = useTheme();
+  const messagesEndRef = useRef(null);
+
+  useEffect(() => {
+    if (isOpen) {
+      setMessages([
+        {
+          sender: 'bot',
+          text: `Hello! I'm your weather assistant. I have the latest data for ${weatherData?.location}. Ask me anything about the forecast, radar, or current conditions.`,
+        },
+      ]);
+    }
+  }, [isOpen, weatherData]);
+
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [messages]);
+
+  const handleSendMessage = async () => {
+    if (input.trim() === '' || isLoading) return;
+
+    const userMessage = { sender: 'user', text: input };
+    setMessages(prev => [...prev, userMessage]);
+    setInput('');
+    setIsLoading(true);
+
+    try {
+      const context = JSON.stringify(weatherData, null, 2);
+      const prompt = `You are a friendly and expert weather assistant. Given the following weather data, answer the user's question concisely and helpfully.
+      
+      Weather Data:
+      ${context}
+      
+      User Question: "${input}"`;
+
+      const response = await InvokeLLM({ prompt });
+
+      const botMessage = { sender: 'bot', text: response };
+      setMessages(prev => [...prev, botMessage]);
+    } catch (error) {
+      console.error('Chatbot error:', error);
+      const errorMessage = {
+        sender: 'bot',
+        text: "I'm sorry, I'm having trouble connecting to my knowledge base. Please try again in a moment.",
+      };
+      setMessages(prev => [...prev, errorMessage]);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  return (
+    <>
+      <motion.div
+        className="fixed bottom-6 right-6 z-50"
+        initial={{ scale: 0 }}
+        animate={{ scale: 1 }}
+        transition={{ delay: 1, type: 'spring', stiffness: 260, damping: 20 }}
+      >
+        <Button
+          onClick={() => setIsOpen(!isOpen)}
+          className="rounded-full w-16 h-16 bg-blue-600 hover:bg-blue-700 text-white shadow-lg"
+        >
+          {isOpen ? <X className="w-8 h-8" /> : <MessageSquare className="w-8 h-8" />}
+        </Button>
+      </motion.div>
+
+      <AnimatePresence>
+        {isOpen && (
+          <motion.div
+            initial={{ opacity: 0, y: 50, scale: 0.9 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: 50, scale: 0.9 }}
+            transition={{ duration: 0.3, ease: 'easeInOut' }}
+            className={`fixed bottom-24 right-6 w-[90vw] max-w-md h-[70vh] max-h-96 rounded-2xl shadow-2xl flex flex-col ${
+              theme === 'dark' ? 'glass-effect-dark' : 'glass-effect-light'
+            }`}
+          >
+            {/* Header */}
+            <div className="p-4 border-b border-white/20 flex items-center space-x-3">
+              <Bot className="w-6 h-6 text-blue-500" />
+              <div>
+                <h3 className="font-bold text-gray-900 dark:text-white">Forecast Assistant</h3>
+                <p className="text-xs text-gray-600 dark:text-gray-400">Powered by AI</p>
+              </div>
+            </div>
+
+            {/* Messages */}
+            <div className="flex-1 p-4 overflow-y-auto space-y-4">
+              {messages.map((msg, index) => (
+                <div key={index} className={`flex items-start gap-3 ${msg.sender === 'user' ? 'justify-end' : ''}`}>
+                  {msg.sender === 'bot' && <Bot className="w-5 h-5 flex-shrink-0 text-blue-500 mt-1" />}
+                  <div className={`px-4 py-2 rounded-2xl max-w-xs ${
+                    msg.sender === 'user' 
+                      ? 'bg-blue-600 text-white rounded-br-none' 
+                      : 'bg-white/50 dark:bg-black/20 text-gray-900 dark:text-white rounded-bl-none'
+                  }`}>
+                    {msg.text}
+                  </div>
+                  {msg.sender === 'user' && <User className="w-5 h-5 flex-shrink-0 bg-gray-300 dark:bg-gray-600 p-1 rounded-full mt-1" />}
+                </div>
+              ))}
+              {isLoading && (
+                <div className="flex items-start gap-3">
+                  <Bot className="w-5 h-5 flex-shrink-0 text-blue-500 mt-1" />
+                  <div className="px-4 py-2 rounded-2xl max-w-xs bg-white/50 dark:bg-black/20 text-gray-900 dark:text-white rounded-bl-none">
+                    <Loader2 className="w-5 h-5 animate-spin" />
+                  </div>
+                </div>
+              )}
+              <div ref={messagesEndRef} />
+            </div>
+
+            {/* Input */}
+            <div className="p-4 border-t border-white/20">
+              <div className="flex items-center space-x-2">
+                <Textarea
+                  value={input}
+                  onChange={(e) => setInput(e.target.value)}
+                  onKeyPress={(e) => e.key === 'Enter' && !e.shiftKey && handleSendMessage()}
+                  placeholder="Ask about the weather..."
+                  className="flex-1 resize-none bg-transparent border-gray-300 dark:border-gray-600 focus:ring-blue-500 text-gray-900 dark:text-white"
+                  rows={1}
+                />
+                <Button onClick={handleSendMessage} size="icon" disabled={isLoading}>
+                  <Send className="w-5 h-5" />
+                </Button>
+              </div>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </>
+  );
+}
