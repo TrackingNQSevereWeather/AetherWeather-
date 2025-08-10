@@ -1,0 +1,217 @@
+import React, { useState, useEffect } from 'react';
+import { motion } from 'framer-motion';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import { InvokeLLM } from '@/integrations/Core';
+import { Leaf, RefreshCw, Loader2, Thermometer, Droplets, Sun, Wind, AlertTriangle } from 'lucide-react';
+import { useTheme } from '../theme/ThemeProvider';
+
+const AgriStatCard = ({ title, value, unit, icon: Icon, description }) =>
+<div className="bg-gray-800/30 p-4 rounded-lg text-center">
+    <Icon className="w-6 h-6 mx-auto mb-2 text-green-400" />
+    <div className="text-slate-50 text-lg font-bold">{value}{unit && <span className="text-sm ml-1">{unit}</span>}</div>
+    <div className="text-xs text-white/70">{title}</div>
+    <div className="text-xs text-white/50 mt-1">{description}</div>
+  </div>;
+
+
+export default function AgricultureWeather({ weatherData }) {
+  const { theme, temperatureUnit } = useTheme();
+  const [agriData, setAgriData] = useState(null);
+  const [isLoading, setIsLoading] = useState(false);
+  const [lastUpdated, setLastUpdated] = useState(null);
+
+  const convertTemp = (celsius) => {
+    if (temperatureUnit === 'fahrenheit') {
+      return Math.round(celsius * 9 / 5 + 32);
+    }
+    return Math.round(celsius);
+  };
+
+  const fetchAgriData = async () => {
+    if (!weatherData?.location) return;
+
+    setIsLoading(true);
+    try {
+      const response = await InvokeLLM({
+        prompt: `Get agricultural weather conditions for ${weatherData.location}.
+
+        Provide information for farming and crop management using current weather: Temperature ${weatherData.current_temp}°C, Humidity ${weatherData.humidity}%, Wind ${weatherData.wind_speed} km/h.
+
+        Include the following agricultural metrics:
+        - Soil moisture estimate (percentage 0-100)
+        - Soil temperature at 10cm depth
+        - Growing Degree Days for next 7 days (base 10°C)
+        - Expected rainfall for next 7 days
+        - Frost risk assessment
+        - Evapotranspiration rate (mm/24h)
+        - Pest and disease risk summary`,
+        add_context_from_internet: true,
+        response_json_schema: {
+          type: "object",
+          properties: {
+            soil_moisture: { type: "number", description: "Soil moisture percentage" },
+            soil_temperature: { type: "number", description: "Soil temperature in Celsius" },
+            gdd: { type: "number", description: "Growing Degree Days" },
+            rainfall_forecast: { type: "number", description: "Expected rainfall in mm" },
+            frost_risk: { type: "string", enum: ["None", "Low", "Moderate", "High"] },
+            evapotranspiration: { type: "number", description: "ET rate in mm" },
+            pest_disease_risk: { type: "string", description: "Pest and disease outlook" },
+            farming_summary: { type: "string", description: "Overall farming conditions summary" }
+          }
+        }
+      });
+
+      if (response) {
+        setAgriData(response);
+        setLastUpdated(new Date());
+      }
+    } catch (error) {
+      console.error('Error fetching agriculture data:', error);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (weatherData?.location) {
+      fetchAgriData();
+    }
+  }, [weatherData?.location]);
+
+  if (!weatherData) return null;
+
+  const frostRiskColors = {
+    "None": "bg-green-100 text-green-800",
+    "Low": "bg-yellow-100 text-yellow-800",
+    "Moderate": "bg-orange-100 text-orange-800",
+    "High": "bg-red-100 text-red-800"
+  };
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 20 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.6, delay: 0.7 }}>
+
+      <Card className={`${theme === 'dark' ? 'glass-effect-dark' : 'glass-effect-light'} border-white/20`}>
+        <CardHeader>
+          <div className="flex items-center justify-between">
+            <CardTitle className="flex items-center space-x-2 text-gray-900 dark:text-white">
+              <Leaf className="w-5 h-5 text-green-500" />
+              <span>Agriculture Weather</span>
+            </CardTitle>
+            <Button
+              onClick={fetchAgriData}
+              disabled={isLoading}
+              variant="outline"
+              size="sm" className="bg-slate-950 text-slate-50 px-3 text-sm font-medium inline-flex items-center justify-center gap-2 whitespace-nowrap ring-offset-background transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:size-4 [&_svg]:shrink-0 border border-input hover:bg-accent hover:text-accent-foreground h-9 rounded-md">
+              <RefreshCw className={`w-4 h-4 ${isLoading ? 'animate-spin' : ''}`} />
+            </Button>
+          </div>
+          {lastUpdated &&
+          <p className="text-xs text-gray-600 dark:text-gray-400">
+              Last updated: {lastUpdated.toLocaleTimeString()}
+            </p>
+          }
+        </CardHeader>
+        <CardContent>
+          {isLoading ?
+          <div className="h-48 flex items-center justify-center">
+              <div className="text-center">
+                <Loader2 className="w-8 h-8 animate-spin mx-auto mb-2 text-green-500" />
+                <p className="text-sm text-gray-600 dark:text-gray-400">Loading agriculture data...</p>
+              </div>
+            </div> :
+          agriData ?
+          <div className="space-y-6">
+              {/* Summary */}
+              {agriData.farming_summary &&
+            <div className={`p-4 rounded-lg ${theme === 'dark' ? 'bg-green-900/20' : 'bg-green-50'} border border-green-200 dark:border-green-800`}>
+                  <p className="text-sm text-green-700 dark:text-green-300">{agriData.farming_summary}</p>
+                </div>
+            }
+
+              {/* Agriculture Stats Grid */}
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                <AgriStatCard
+                title="Soil Moisture"
+                value={agriData.soil_moisture}
+                unit="%"
+                icon={Droplets}
+                description="Topsoil estimate" />
+
+                <AgriStatCard
+                title="Soil Temp"
+                value={convertTemp(agriData.soil_temperature || 20)}
+                unit={`°${temperatureUnit.charAt(0).toUpperCase()}`}
+                icon={Thermometer}
+                description="At 10cm depth" />
+
+                <AgriStatCard
+                title="Growing DD"
+                value={agriData.gdd || 0}
+                unit="GDD"
+                icon={Sun}
+                description="Next 7 days" />
+
+                <AgriStatCard
+                title="Rain Forecast"
+                value={agriData.rainfall_forecast || 0}
+                unit="mm"
+                icon={Droplets}
+                description="Next 7 days" />
+
+              </div>
+
+              {/* Additional Info Row */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div className={`p-4 rounded-lg ${theme === 'dark' ? 'bg-gray-800/30' : 'bg-gray-50'}`}>
+                  <div className="flex items-center space-x-2 mb-2">
+                    <Wind className="w-4 h-4 text-blue-400" />
+                    <span className="font-semibold text-gray-900 dark:text-white">Evapotranspiration</span>
+                  </div>
+                  <div className="text-slate-50 text-lg font-bold dark:text-white">
+                    {agriData.evapotranspiration || 'N/A'} mm/day
+                  </div>
+                </div>
+
+                <div className={`p-4 rounded-lg ${theme === 'dark' ? 'bg-gray-800/30' : 'bg-gray-50'}`}>
+                  <div className="flex items-center space-x-2 mb-2">
+                    <AlertTriangle className="w-4 h-4 text-orange-400" />
+                    <span className="font-semibold text-gray-900 dark:text-white">Frost Risk</span>
+                  </div>
+                  <Badge className={`${frostRiskColors[agriData.frost_risk] || 'bg-gray-100 text-gray-800'} font-semibold`}>
+                    {agriData.frost_risk || 'Unknown'}
+                  </Badge>
+                </div>
+              </div>
+
+              {/* Pest & Disease Risk */}
+              {agriData.pest_disease_risk &&
+            <div className={`p-4 rounded-lg ${theme === 'dark' ? 'bg-amber-900/20' : 'bg-amber-50'} border border-amber-200 dark:border-amber-800`}>
+                  <div className="flex items-center space-x-2 mb-2">
+                    <Leaf className="w-4 h-4 text-amber-600 dark:text-amber-400" />
+                    <span className="font-semibold text-amber-800 dark:text-amber-200">Pest & Disease Outlook</span>
+                  </div>
+                  <p className="text-sm text-amber-700 dark:text-amber-300">{agriData.pest_disease_risk}</p>
+                </div>
+            }
+            </div> :
+
+          <div className="h-48 flex items-center justify-center">
+              <div className="text-center text-gray-600 dark:text-gray-400">
+                <Leaf className="w-12 h-12 mx-auto mb-2 opacity-50" />
+                <p>Unable to load agriculture data</p>
+                <Button onClick={fetchAgriData} variant="ghost" size="sm" className="mt-2">
+                  Try again
+                </Button>
+              </div>
+            </div>
+          }
+        </CardContent>
+      </Card>
+    </motion.div>);
+
+}
