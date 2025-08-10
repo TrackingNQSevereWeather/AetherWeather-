@@ -1,0 +1,434 @@
+import React, { useState, useEffect, useCallback } from "react";
+import { motion } from "framer-motion";
+import { WeatherData } from "@/entities/WeatherData";
+import { WeatherAPI } from "../components/weather/WeatherAPI";
+import { InvokeLLM } from "@/integrations/Core";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import { AlertCircle, MapPin, Info } from "lucide-react";
+import { useTheme } from "../components/theme/ThemeProvider";
+
+import LocationSearch from "../components/weather/LocationSearch";
+import CurrentWeather from "../components/weather/CurrentWeather";
+import ForecastCard from "../components/weather/ForecastCard";
+import HourlyForecast from "../components/weather/HourlyForecast";
+import WeatherAlerts from "../components/weather/WeatherAlerts";
+import LocalStations from "../components/weather/LocalStations";
+import ForecastAssistant from "../components/chatbot/ForecastAssistant";
+import FishingConditions from "../components/weather/FishingConditions";
+import FireDanger from "../components/weather/FireDanger";
+import AirQuality from "../components/weather/AirQuality";
+import HumidityGraph from "../components/weather/HumidityGraph";
+import DroughtMonitor from "../components/weather/DroughtMonitor";
+import CapeIndex from "../components/weather/CapeIndex";
+import PollenForecast from "../components/weather/PollenForecast";
+import AgricultureWeather from "../components/weather/AgricultureWeather";
+import WeatherSharing from "../components/weather/WeatherSharing";
+import MarineConditions from "../components/weather/MarineConditions"; // Added import
+import { createPageUrl } from "@/utils";
+
+export default function Dashboard() {
+  const [weatherData, setWeatherData] = useState(null);
+  const [advancedData, setAdvancedData] = useState({
+    fire: null,
+    drought: null,
+    cape: null
+  });
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState(null);
+  const [notification, setNotification] = useState(null);
+  const [usingFallbackData, setUsingFallbackData] = useState(false);
+  const [hasAutoLocated, setHasAutoLocated] = useState(false);
+  const { updateWeatherCondition } = useTheme();
+
+  // Defined handleLocationSelect using useCallback to avoid issues with autoDetectLocation dependency
+  const handleLocationSelect = useCallback(async (location) => {
+    setIsLoading(true);
+    setError(null);
+    setUsingFallbackData(false);
+    setAdvancedData({ fire: null, drought: null, cape: null }); // Clear advanced data on new location select
+
+    try {
+      let lat, lon, locationName, searchQuery;
+
+      if (typeof location === 'string') {
+        const locations = await WeatherAPI.searchLocation(location);
+        if (locations.length === 0) {
+          throw new Error('Location not found. Please try a different search term.');
+        }
+        lat = locations[0].lat;
+        lon = locations[0].lon;
+        locationName = locations[0].name;
+        searchQuery = `${lat},${lon}`;
+      } else {
+        lat = location.lat;
+        lon = location.lon;
+        searchQuery = `${lat},${lon}`;
+        try {
+          locationName = await WeatherAPI.reverseGeocode(lat, lon);
+        } catch (reverseGeocodeError) {
+          console.warn("Could not reverse geocode location, using coordinates:", reverseGeocodeError);
+          locationName = `${lat.toFixed(2)}, ${lon.toFixed(2)}`; // Fallback name
+        }
+      }
+
+      // Perform a single, combined API call for efficiency
+      const data = await WeatherAPI.getCombinedWeatherData(searchQuery);
+
+      // Format all data sections from the single API response
+      const currentWeather = WeatherAPI.formatCurrentWeather(data);
+      const { forecasts, hourlyData } = WeatherAPI.formatForecast(data);
+      const airQuality = WeatherAPI.formatAirQuality(data);
+      const warnings = WeatherAPI.formatAlerts(data);
+
+      // Check if we're using fallback data (when API fails)
+      // This checks if primary weather info (like icon or current temp) is missing,
+      // indicating an API key issue or empty response.
+      if (!currentWeather.weather_icon && !currentWeather.current_temp) {
+        setUsingFallbackData(true);
+      }
+
+      const completeWeatherData = {
+        ...currentWeather,
+        location: locationName,
+        forecast_data: forecasts,
+        hourly_data: hourlyData,
+        air_quality: airQuality,
+        warnings: warnings, // Use real alerts from the API
+        local_stations: [] // Stations data will now be fetched by the LocalStations component itself
+        // Removed the basic fishing_conditions - the FishingConditions component will now handle fetching its own data
+      };
+
+      // Save to database
+      await WeatherData.create(completeWeatherData);
+      setWeatherData(completeWeatherData);
+
+      // Fetch advanced data using AI in the background
+      // This is intentionally not awaited to allow the main weather data to load faster
+      fetchAdvancedData(lat, lon, locationName).catch((aiError) => {
+        console.error("Failed to fetch advanced AI data:", aiError);
+      });
+
+    } catch (err) {
+      console.error("Weather fetch error:", err);
+      
+      // More specific error handling
+      if (err.message.includes('Location not found')) {
+        setError(`Location "${typeof location === 'string' ? location : 'coordinates'}" not found. Please try a different search term or check your spelling.`);
+      } else if (err.message.includes('API key')) {
+        setError("Weather API key issue. Using demo data.");
+        setUsingFallbackData(true);
+      } else {
+        setError(`Failed to fetch weather data: ${err.message}`);
+      }
+
+      // Try to load cached data as fallback
+      try {
+        const savedData = await WeatherData.list('-created_date', 1);
+        if (savedData.length > 0) {
+          setWeatherData(savedData[0]);
+          setError(prev => prev + " Using cached weather data.");
+        }
+      } catch (fallbackErr) {
+        console.error("Failed to load cached data:", fallbackErr);
+      }
+    } finally {
+      setIsLoading(false);
+    }
+  }, []);
+
+  const autoDetectLocation = useCallback(() => {
+    if (hasAutoLocated) return;
+
+    setNotification("Detecting your location...");
+    setHasAutoLocated(true);
+
+    if (!navigator.geolocation) {
+      console.warn("Geolocation not supported by this browser.");
+      setNotification("Geolocation not supported. Loading default location...");
+      handleLocationSelect({ lat: -19.2590, lon: 146.8169 }); // Townsville
+      setTimeout(() => setNotification(null), 5000);
+      return;
+    }
+
+    const options = {
+      enableHighAccuracy: true,
+      timeout: 8000,
+      maximumAge: 300000
+    };
+
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        const { latitude, longitude } = position.coords;
+        setNotification("Location detected! Loading your weather...");
+
+        handleLocationSelect({
+          lat: latitude,
+          lon: longitude
+        });
+
+        setTimeout(() => setNotification(null), 3000);
+      },
+      (err) => {
+        console.warn(`Geolocation error: ${err.message}`);
+        let fallbackMessage = "Could not auto-detect location. Loading Townsville data...";
+
+        switch (err.code) {
+          case err.PERMISSION_DENIED:
+            fallbackMessage = "Location access denied. Loading Townsville data...";
+            break;
+          case err.POSITION_UNAVAILABLE:
+            fallbackMessage = "Location unavailable. Loading Townsville data...";
+            break;
+          case err.TIMEOUT:
+            fallbackMessage = "Location timeout. Loading Townsville data...";
+            break;
+          default:
+            fallbackMessage = "Loading Townsville data...";
+            break;
+        }
+
+        setNotification(fallbackMessage);
+        // Default to Townsville, Australia
+        handleLocationSelect({ lat: -19.2590, lon: 146.8169 });
+        setTimeout(() => setNotification(null), 5000);
+      },
+      options
+    );
+  }, [hasAutoLocated, handleLocationSelect]);
+
+  useEffect(() => {
+    const urlParams = new URLSearchParams(window.location.search);
+    const lat = urlParams.get('lat');
+    const lon = urlParams.get('lon'); // Corrected from url_params.get('lon')
+
+    // This effect should run only once on initial mount.
+    const initialize = () => {
+      if (lat && lon) {
+        // If location is passed via URL, load it and prevent auto-detection.
+        setHasAutoLocated(true); // Mark as "handled" to prevent auto-detection race condition
+        handleLocationSelect({ lat: parseFloat(lat), lon: parseFloat(lon) });
+      } else if (!hasAutoLocated) {
+        // Otherwise, run auto-detection only if it hasn't run before.
+        autoDetectLocation();
+      }
+    };
+
+    initialize();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    if (weatherData?.condition) {
+      updateWeatherCondition(weatherData.condition);
+    }
+  }, [weatherData, updateWeatherCondition]);
+
+  const fetchAdvancedData = async (lat, lon, locationName) => {
+    // Determine if the location is in Australia for specific prompts
+    const isAustralia = locationName.toLowerCase().includes('australia');
+
+    // Define prompts for the AI
+    const firePrompt = isAustralia ?
+    `Get the current fire danger rating for ${locationName}. Use the official ratings from the relevant Australian state fire service (like RFS, CFA, QFES). Provide a brief description and the issuing authority.` :
+    `Get the current fire danger rating for ${locationName}. Use data from the local meteorological or fire service. Provide a brief description and the issuing authority.`;
+
+    const capePrompt = `Get the atmospheric instability metrics (CAPE, Lifted Index, Wind Shear) for ${locationName}. Use data from the GFS or a similar global forecast model. Provide CAPE value in J/kg, its severity, 0-6km wind shear in knots, and Lifted Index. Also, if available, storm-relative helicity in m²/s².`;
+    const droughtPrompt = `Get the current drought status for ${locationName}. Use data from the U.S. Drought Monitor or Australian Bureau of Meteorology or other relevant national drought monitoring services. Provide the drought level, when the last significant rain was, and optionally a rainfall deficit percentage for the season.`;
+
+    try {
+      // Fetch all advanced data in parallel using InvokeLLM
+      const [fireResponse, capeResponse, droughtResponse] = await Promise.allSettled([
+      InvokeLLM({
+        prompt: firePrompt,
+        add_context_from_internet: true,
+        response_json_schema: {
+          type: "object",
+          properties: {
+            rating: { type: "string", enum: ["Low-Moderate", "High", "Very High", "Severe", "Extreme", "Catastrophic", "Unknown"] },
+            description: { type: "string" },
+            issued_by: { type: "string" }
+          },
+          required: ["rating", "description"]
+        }
+      }),
+      InvokeLLM({
+        prompt: capePrompt,
+        add_context_from_internet: true,
+        response_json_schema: {
+          type: "object",
+          properties: {
+            value: { type: "number", description: "CAPE value in J/kg" },
+            severity: { type: "string", enum: ["Low", "Moderate", "High", "Very High", "Extreme", "Unknown"] },
+            shear: { type: "number", description: "0-6km wind shear in knots" },
+            lifted_index: { type: "number" },
+            helicity: { type: "number", description: "Storm-relative helicity in m²/s²", nullable: true }
+          },
+          required: ["value", "severity", "shear", "lifted_index"]
+        }
+      }),
+      InvokeLLM({
+        prompt: droughtPrompt,
+        add_context_from_internet: true,
+        response_json_schema: {
+          type: "object",
+          properties: {
+            level: { type: "string", enum: ["None", "Abnormally Dry", "Moderate Drought", "Severe Drought", "Extreme Drought", "Exceptional Drought", "Unknown"] },
+            last_significant_rain: { type: "string", nullable: true },
+            rainfall_deficit: { type: "number", description: "Percentage deficit for the season", nullable: true }
+          },
+          required: ["level"]
+        }
+      })]
+      );
+
+      // Process results from Promise.allSettled
+      setAdvancedData({
+        fire: fireResponse.status === 'fulfilled' ? fireResponse.value : null,
+        cape: capeResponse.status === 'fulfilled' ? capeResponse.value : null,
+        drought: droughtResponse.status === 'fulfilled' ? droughtResponse.value : null
+      });
+
+    } catch (aiFetchError) {
+      console.error("Error fetching advanced AI data:", aiFetchError);
+      // Set advanced data to null if there's a general error
+      setAdvancedData({ fire: null, drought: null, cape: null });
+    }
+  };
+
+
+  return (
+    <div className="min-h-screen p-6">
+      <div className="max-w-6xl mx-auto">
+        <motion.div
+          initial={{ opacity: 0, y: -20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.6 }}
+          className="mb-8">
+
+          <h1 className="text-4xl font-bold mb-2">
+            Weather Dashboard
+          </h1>
+          <p className="text-black/70 dark:text-white/70">
+            {usingFallbackData ? "Demo weather data (API key needed for live data)" : "Real-time weather data powered by WeatherAPI.com"}
+          </p>
+        </motion.div>
+
+        {notification &&
+        <motion.div
+          initial={{ opacity: 0, y: -20 }}
+          animate={{ opacity: 1, y: 0 }}
+          exit={{ opacity: 0, y: 20 }}
+          className="mb-4">
+
+            <Alert className="glass-effect-light dark:glass-effect-dark border-blue-200 dark:border-blue-800 bg-blue-50/50 dark:bg-blue-900/20">
+              <MapPin className="h-4 w-4 text-blue-600 dark:text-blue-400" />
+              <AlertDescription className="text-blue-800 dark:text-blue-200">
+                {notification}
+              </AlertDescription>
+            </Alert>
+          </motion.div>
+        }
+
+        {usingFallbackData &&
+        <Alert className="mb-6 border-yellow-200 dark:border-yellow-800 bg-yellow-50 dark:bg-yellow-900/20">
+            <AlertCircle className="h-4 w-4 text-yellow-600 dark:text-yellow-400" />
+            <AlertDescription className="text-yellow-800 dark:text-yellow-200">
+              <strong>Demo Mode:</strong> The WeatherAPI.com key needs to be activated. Currently showing realistic demo data.
+              <br />To get live data, please check your API key at <a href="https://www.weatherapi.com/" target="_blank" rel="noopener noreferrer" className="underline">WeatherAPI.com</a>
+            </AlertDescription>
+          </Alert>
+        }
+
+        <LocationSearch
+          onLocationSelect={handleLocationSelect}
+          isLoading={isLoading} />
+
+
+        {error && !usingFallbackData &&
+        <Alert className="mb-6 border-red-200 dark:border-red-800 bg-red-50 dark:bg-red-900/20">
+            <AlertCircle className="h-4 w-4 text-red-600 dark:text-red-400" />
+            <AlertDescription className="text-red-800 dark:text-red-200">
+              {error}
+            </AlertDescription>
+          </Alert>
+        }
+
+        <div className="space-y-8">
+          <WeatherAlerts warnings={weatherData?.warnings} />
+
+          <CurrentWeather
+            weatherData={weatherData}
+            isLoading={isLoading} />
+
+
+          <LocalStations
+            weatherData={weatherData} />
+
+
+          {weatherData?.hourly_data &&
+          <HourlyForecast hourlyData={weatherData.hourly_data} />
+          }
+
+          {weatherData?.air_quality &&
+          <AirQuality airQualityData={weatherData.air_quality} />
+          }
+
+          <PollenForecast weatherData={weatherData} />
+
+          <AgricultureWeather weatherData={weatherData} />
+
+          {weatherData?.hourly_data &&
+          <HumidityGraph hourlyData={weatherData.hourly_data} />
+          }
+
+          <FireDanger
+            fireDangerData={advancedData.fire}
+            weatherContext={{
+              temp: weatherData?.current_temp,
+              humidity: weatherData?.humidity,
+              wind_speed: weatherData?.wind_speed
+            }} />
+
+
+          {advancedData.drought && <DroughtMonitor droughtData={advancedData.drought} />}
+
+          {advancedData.cape && <CapeIndex capeData={advancedData.cape} />}
+
+          {/* Fishing Conditions will now fetch its own AI data using the location from weatherData */}
+          <FishingConditions weatherData={weatherData} />
+
+          {/* New Marine & Coastal Forecast Component */}
+          <MarineConditions weatherData={weatherData} />
+
+          <WeatherSharing weatherData={weatherData} />
+
+          {/* Forecast Assistant - Dedicated section */}
+          <ForecastAssistant weatherData={weatherData} />
+
+          {/* Daily Forecast */}
+          {weatherData?.forecast_data &&
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.6, delay: 0.4 }}
+            className="space-y-4">
+
+              <h2 className="text-2xl font-bold text-white">Daily Forecast</h2>
+              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
+                {weatherData.forecast_data.map((forecast, index) =>
+              <ForecastCard
+                key={index}
+                forecast={forecast}
+                index={index} />
+
+              )}
+              </div>
+              <div className="text-xs text-white/70 mt-2 p-3 rounded-lg bg-gray-800/20 flex items-center space-x-2">
+                <Info className="w-4 h-4 flex-shrink-0" />
+                <span>The free WeatherAPI.com plan provides a 3-day forecast. A paid plan is required for an extended forecast.</span>
+              </div>
+            </motion.div>
+          }
+        </div>
+      </div>
+    </div>);
