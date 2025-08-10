@@ -1,0 +1,187 @@
+
+import React, { useState, useEffect } from "react";
+import { motion } from "framer-motion";
+import { FavoriteLocation } from "@/entities/FavoriteLocation";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
+import { MapPin, Trash2, Edit, Save, X, Info } from "lucide-react";
+import { Link } from "react-router-dom";
+import { createPageUrl } from "@/utils";
+
+export default function Locations() {
+  const [favorites, setFavorites] = useState([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [editingId, setEditingId] = useState(null);
+  const [editFormData, setEditFormData] = useState({ location_name: "", notes: "" });
+
+  useEffect(() => {
+    loadFavorites();
+  }, []);
+
+  const loadFavorites = async () => {
+    setIsLoading(true);
+    try {
+      const favs = await FavoriteLocation.list('-created_date');
+      setFavorites(favs);
+    } catch (err) {
+      console.error("Error loading favorite locations:", err);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleDelete = async (id) => {
+    try {
+      await FavoriteLocation.delete(id);
+      setFavorites(prev => prev.filter(loc => loc.id !== id));
+    } catch (err) {
+      console.error("Error deleting location:", err);
+    }
+  };
+
+  const handleEdit = (location) => {
+    setEditingId(location.id);
+    setEditFormData({ 
+      location_name: location.location_name, 
+      notes: location.notes || "" 
+    });
+  };
+
+  const handleCancelEdit = () => {
+    setEditingId(null);
+    setEditFormData({ location_name: "", notes: "" });
+  };
+
+  const handleSaveEdit = async (id) => {
+    try {
+      await FavoriteLocation.update(id, editFormData);
+      setFavorites(prev => prev.map(loc => 
+        loc.id === id ? { ...loc, ...editFormData } : loc
+      ));
+      handleCancelEdit();
+    } catch (err) {
+      console.error("Error saving location:", err);
+    }
+  };
+
+  const handleFormChange = (e) => {
+    const { name, value } = e.target;
+    setEditFormData(prev => ({ ...prev, [name]: value }));
+  };
+
+  if (isLoading) {
+    return (
+      <div className="min-h-screen p-6">
+        <div className="max-w-4xl mx-auto">
+          <div className="mb-8">
+            <div className="h-8 bg-white/20 rounded-lg w-64 mb-2 animate-pulse" />
+            <div className="h-4 bg-white/20 rounded-lg w-96 animate-pulse" />
+          </div>
+          <div className="space-y-6">
+            {Array(3).fill(0).map((_, i) => (
+              <div key={i} className="h-32 bg-white/20 rounded-2xl animate-pulse" />
+            ))}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="min-h-screen p-6">
+      <div className="max-w-4xl mx-auto">
+        <motion.div
+          initial={{ opacity: 0, y: -20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.6 }}
+          className="mb-8"
+        >
+          <h1 className="text-4xl font-bold text-white mb-2">
+            My Favorite Locations
+          </h1>
+          <p className="text-white/70">
+            Manage your saved locations or click one to view its weather.
+          </p>
+        </motion.div>
+
+        {favorites.length === 0 ? (
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.6 }}
+            className="text-center py-16"
+          >
+            <MapPin className="w-16 h-16 mx-auto mb-4 text-white/50" />
+            <h2 className="text-xl font-semibold text-white mb-2">
+              No favorite locations yet
+            </h2>
+            <p className="text-white/70">
+              Search for a location on the Dashboard and click the star icon to save it.
+            </p>
+          </motion.div>
+        ) : (
+          <div className="space-y-4">
+            {favorites.map((location) => (
+              <motion.div
+                key={location.id}
+                layout
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.5 }}
+              >
+                <Card className="glass-effect-dark border-white/20 group">
+                  {editingId === location.id ? (
+                    <CardContent className="p-4 space-y-3">
+                      <Input
+                        name="location_name"
+                        value={editFormData.location_name}
+                        onChange={handleFormChange}
+                        className="bg-gray-800 border-gray-700 text-white"
+                      />
+                      <Textarea
+                        name="notes"
+                        placeholder="Add some notes..."
+                        value={editFormData.notes}
+                        onChange={handleFormChange}
+                        className="bg-gray-800 border-gray-700 text-white"
+                      />
+                      <div className="flex justify-end space-x-2">
+                        <Button variant="ghost" size="sm" onClick={handleCancelEdit}><X className="w-4 h-4 mr-1" />Cancel</Button>
+                        <Button size="sm" onClick={() => handleSaveEdit(location.id)} className="bg-blue-600 hover:bg-blue-700"><Save className="w-4 h-4 mr-1" />Save</Button>
+                      </div>
+                    </CardContent>
+                  ) : (
+                    <div className="flex items-center justify-between p-4">
+                      <Link 
+                        to={createPageUrl(`Dashboard?lat=${location.latitude}&lon=${location.longitude}`)}
+                        className="flex-1 min-w-0"
+                      >
+                          <CardTitle className="flex items-center space-x-3 text-white">
+                            <MapPin className="w-5 h-5 text-blue-400 flex-shrink-0" />
+                            <div className="truncate">
+                                <span className="text-lg">{location.location_name}</span>
+                                {location.notes && <p className="text-sm font-normal text-white/60 truncate">{location.notes}</p>}
+                            </div>
+                          </CardTitle>
+                      </Link>
+                      <div className="flex items-center space-x-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                        <Button variant="ghost" size="icon" onClick={() => handleEdit(location)}>
+                          <Edit className="w-4 h-4" />
+                        </Button>
+                        <Button variant="ghost" size="icon" onClick={() => handleDelete(location.id)} className="text-red-500 hover:text-red-700">
+                          <Trash2 className="w-4 h-4" />
+                        </Button>
+                      </div>
+                    </div>
+                  )}
+                </Card>
+              </motion.div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
