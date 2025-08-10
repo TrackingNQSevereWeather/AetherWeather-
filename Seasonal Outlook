@@ -1,0 +1,433 @@
+
+import React, { useState, useEffect, useCallback } from 'react';
+import { motion } from 'framer-motion';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import { InvokeLLM } from '@/integrations/Core';
+import {
+  Calendar,
+  Thermometer,
+  CloudRain,
+  Zap,
+  Wind,
+  TrendingUp,
+  RefreshCw,
+  Loader2,
+  AlertTriangle,
+  Info,
+  Target
+} from 'lucide-react';
+import { useTheme } from '../theme/ThemeProvider';
+
+const OutlookCard = ({ title, data, icon: Icon, colorClass }) => (
+  <Card className={`glass-effect-dark border-white/20 ${colorClass}`}>
+    <CardHeader className="pb-3">
+      <CardTitle className="flex items-center space-x-2 text-white text-lg">
+        <Icon className="w-5 h-5" />
+        <span>{title}</span>
+      </CardTitle>
+    </CardHeader>
+    <CardContent>
+      {data ? (
+        <div className="space-y-3">
+          <div className="flex items-center justify-between">
+            <Badge className={`${data.trend_color || 'bg-gray-500'} text-white font-semibold px-3 py-1`}>
+              {data.outlook || data.level || 'Unknown'}
+            </Badge>
+            <div className="text-right">
+              <p className="text-xs text-white/70">Confidence</p>
+              <p className="text-white font-medium">{data.confidence || 'Medium'}</p>
+            </div>
+          </div>
+          <p className="text-sm text-white/90">{data.description}</p>
+          {data.key_factors && (
+            <div className="text-xs text-white/70">
+              <p className="font-medium mb-1">Key Factors:</p>
+              <ul className="space-y-1">
+                {data.key_factors.slice(0, 3).map((factor, i) => (
+                  <li key={i} className="flex items-start">
+                    <span className="w-1.5 h-1.5 bg-blue-400 rounded-full mt-1.5 mr-2 flex-shrink-0"></span>
+                    {factor}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+        </div>
+      ) : (
+        <div className="text-center py-4">
+          <Loader2 className="w-6 h-6 animate-spin mx-auto mb-2 text-blue-400" />
+          <p className="text-sm text-white/70">Loading...</p>
+        </div>
+      )}
+    </CardContent>
+  </Card>
+);
+
+export default function SeasonalOutlook({ location }) {
+  const { theme } = useTheme();
+  const [outlookData, setOutlookData] = useState(null);
+  const [isLoading, setIsLoading] = useState(false);
+  const [lastUpdated, setLastUpdated] = useState(null);
+
+  const fetchSeasonalOutlook = useCallback(async () => {
+    if (!location) return;
+
+    const cacheKey = `seasonalOutlook_${location}`;
+    const fiveHours = 5 * 60 * 60 * 1000;
+
+    // 1. Check for a fresh cache first
+    try {
+      const cachedItem = localStorage.getItem(cacheKey);
+      if (cachedItem) {
+        const { data, timestamp } = JSON.parse(cachedItem);
+        const cacheAge = new Date().getTime() - new Date(timestamp).getTime();
+
+        if (cacheAge < fiveHours) {
+          // Only update state if the cached data is different from current state
+          // This prevents unnecessary re-renders if a background refresh fetches the same data
+          if (JSON.stringify(outlookData) !== JSON.stringify(data)) {
+            setOutlookData(data);
+            setLastUpdated(new Date(timestamp));
+          }
+          setIsLoading(false);
+          return; // Exit if cache is valid
+        }
+      }
+    } catch (e) {
+      console.error("Failed to read or parse outlook cache:", e);
+      // If cache reading/parsing fails, proceed to fetch new data
+    }
+
+    // 2. If no valid cache, fetch fresh data
+    setIsLoading(true);
+    try {
+      const response = await InvokeLLM({
+        prompt: `Provide a comprehensive seasonal and climate outlook for ${location}, focusing on the upcoming 3-6 months. Include specific analysis for North Queensland/Australian tropical climate patterns.
+
+        Provide detailed analysis for:
+
+        1. OVERALL SEASONAL SUMMARY: General expectations for the upcoming season(s)
+        2. TEMPERATURE OUTLOOK: Expected temperature trends vs historical averages
+        3. PRECIPITATION OUTLOOK: Rainfall expectations and patterns
+        4. STORM OUTLOOK: Severe thunderstorm activity predictions
+        5. CYCLONE OUTLOOK: Tropical cyclone season forecast including formation zones and landfall risks
+        6. WIND SHEAR OUTLOOK: Upper-level wind patterns affecting storm development
+        7. CLIMATE DRIVERS: El Niño/La Niña, Indian Ocean Dipole, and other major climate influences
+
+        Consider current oceanic and atmospheric conditions, historical patterns, and provide confidence levels for each outlook. Focus on actionable information for residents and emergency planning.`,
+        add_context_from_internet: true,
+        response_json_schema: {
+          type: "object",
+          properties: {
+            overall_summary: {
+              type: "object",
+              properties: {
+                outlook: { type: "string" },
+                description: { type: "string" },
+                confidence: { type: "string", enum: ["High", "Medium", "Low"] },
+                season_focus: { type: "string" }
+              }
+            },
+            temperature: {
+              type: "object",
+              properties: {
+                outlook: { type: "string", enum: ["Much Above Average", "Above Average", "Near Average", "Below Average", "Much Below Average"] },
+                description: { type: "string" },
+                confidence: { type: "string", enum: ["High", "Medium", "Low"] },
+                key_factors: { type: "array", items: { type: "string" } }
+              }
+            },
+            precipitation: {
+              type: "object",
+              properties: {
+                outlook: { type: "string", enum: ["Much Above Average", "Above Average", "Near Average", "Below Average", "Much Below Average"] },
+                description: { type: "string" },
+                confidence: { type: "string", enum: ["High", "Medium", "Low"] },
+                key_factors: { type: "array", items: { type: "string" } }
+              }
+            },
+            storms: {
+              type: "object",
+              properties: {
+                level: { type: "string", enum: ["Very High", "High", "Moderate", "Low", "Very Low"] },
+                description: { type: "string" },
+                confidence: { type: "string", enum: ["High", "Medium", "Low"] },
+                key_factors: { type: "array", items: { type: "string" } }
+              }
+            },
+            cyclones: {
+              type: "object",
+              properties: {
+                level: { type: "string", enum: ["Very High", "High", "Moderate", "Low", "Very Low"] },
+                description: { type: "string" },
+                confidence: { type: "string", enum: ["High", "Medium", "Low"] },
+                formation_zones: { type: "array", items: { type: "string" } },
+                landfall_risk: { type: "string" },
+                key_factors: { type: "array", items: { type: "string" } }
+              },
+              required: ["level", "description", "confidence"]
+            },
+            wind_shear: {
+              type: "object",
+              properties: {
+                level: { type: "string", enum: ["Very High", "High", "Moderate", "Low", "Very Low"] },
+                description: { type: "string" },
+                confidence: { type: "string", enum: ["High", "Medium", "Low"] },
+                impact_on_storms: { type: "string" },
+                key_factors: { type: "array", items: { type: "string" } }
+              }
+            },
+            climate_drivers: {
+              type: "object",
+              properties: {
+                enso_status: { type: "string" },
+                iod_status: { type: "string" },
+                description: { type: "string" },
+                influence_summary: { type: "string" }
+              }
+            }
+          },
+          required: ["overall_summary", "temperature", "precipitation", "storms", "cyclones", "wind_shear", "climate_drivers"]
+        }
+      });
+
+      if (response) {
+        // Add color classes based on outlook levels
+        const processedData = { ...response };
+
+        // Temperature colors
+        const tempColors = {
+          "Much Above Average": "bg-red-600",
+          "Above Average": "bg-orange-500",
+          "Near Average": "bg-green-500",
+          "Below Average": "bg-blue-500",
+          "Much Below Average": "bg-blue-700"
+        };
+        processedData.temperature.trend_color = tempColors[response.temperature?.outlook] || "bg-gray-500";
+
+        // Precipitation colors
+        processedData.precipitation.trend_color = tempColors[response.precipitation?.outlook] || "bg-gray-500"; // Assuming same colors work for precipitation magnitude
+
+        // Risk level colors
+        const riskColors = {
+          "Very High": "bg-red-600",
+          "High": "bg-orange-500",
+          "Moderate": "bg-yellow-500",
+          "Low": "bg-green-500",
+          "Very Low": "bg-green-600"
+        };
+        processedData.storms.trend_color = riskColors[response.storms?.level] || "bg-gray-500";
+        processedData.cyclones.trend_color = riskColors[response.cyclones?.level] || "bg-gray-500";
+        processedData.wind_shear.trend_color = riskColors[response.wind_shear?.level] || "bg-gray-500";
+
+        const now = new Date();
+        setOutlookData(processedData);
+        setLastUpdated(now);
+
+        // 3. Save the new data and timestamp to localStorage
+        try {
+          const cacheItem = {
+            data: processedData,
+            timestamp: now.toISOString(),
+          };
+          localStorage.setItem(cacheKey, JSON.stringify(cacheItem));
+        } catch (e) {
+          console.error("Failed to save outlook to cache:", e);
+        }
+      }
+    } catch (error) {
+      console.error('Error fetching seasonal outlook:', error);
+    } finally {
+      setIsLoading(false);
+    }
+  }, [location, outlookData]); // Added outlookData to dependencies to correctly compare against cached data
+
+  useEffect(() => {
+    if (location) {
+      fetchSeasonalOutlook(); // Initial call which now uses caching logic
+
+      // Set an interval to re-validate the cache and fetch if needed every 5 hours
+      const intervalId = setInterval(fetchSeasonalOutlook, 5 * 60 * 60 * 1000);
+
+      // Clean up the interval on component unmount or when location changes
+      return () => clearInterval(intervalId);
+    }
+  }, [location, fetchSeasonalOutlook]);
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 20 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.6, delay: 0.3 }}
+    >
+      <Card className={`${theme === 'dark' ? 'glass-effect-dark' : 'glass-effect-light'} border-white/20`}>
+        <CardHeader>
+          <div className="flex items-center justify-between">
+            <CardTitle className="flex items-center space-x-2 text-gray-900 dark:text-white">
+              <Calendar className="w-6 h-6 text-purple-500" />
+              <span>Seasonal & Climate Outlook</span>
+            </CardTitle>
+            <Button
+              onClick={fetchSeasonalOutlook}
+              disabled={isLoading}
+              variant="outline"
+              size="sm"
+              className="bg-slate-950 text-slate-50 border-white/20 hover:bg-white/20"
+            >
+              <RefreshCw className={`w-4 h-4 ${isLoading ? 'animate-spin' : ''}`} />
+            </Button>
+          </div>
+          {lastUpdated && (
+            <p className="text-xs text-gray-600 dark:text-gray-400">
+              Last updated: {lastUpdated.toLocaleDateString()} at {lastUpdated.toLocaleTimeString()}
+            </p>
+          )}
+        </CardHeader>
+        <CardContent>
+          {isLoading && !outlookData ? (
+            <div className="h-64 flex items-center justify-center">
+              <div className="text-center">
+                <Loader2 className="w-12 h-12 animate-spin mx-auto mb-4 text-purple-500" />
+                <p className="text-gray-600 dark:text-gray-400">Generating seasonal outlook...</p>
+              </div>
+            </div>
+          ) : outlookData ? (
+            <div className="space-y-6">
+              {/* Overall Summary */}
+              <div className="bg-purple-900/20 p-6 rounded-lg border border-purple-500/30">
+                <h3 className="font-bold text-white mb-3 flex items-center space-x-2">
+                  <Target className="w-5 h-5 text-purple-400" />
+                  <span>Seasonal Summary</span>
+                </h3>
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <Badge className="bg-purple-600 text-white font-semibold">
+                      {outlookData.overall_summary?.season_focus || 'General Outlook'}
+                    </Badge>
+                    <Badge variant="outline" className="border-purple-400 text-purple-300">
+                      {outlookData.overall_summary?.confidence} Confidence
+                    </Badge>
+                  </div>
+                  <p className="text-white/90">{outlookData.overall_summary?.description}</p>
+                </div>
+              </div>
+
+              {/* Climate Drivers */}
+              {outlookData.climate_drivers && (
+                <div className="bg-blue-900/20 p-4 rounded-lg border border-blue-500/30">
+                  <h4 className="font-semibold text-blue-300 mb-2 flex items-center space-x-2">
+                    <TrendingUp className="w-4 h-4" />
+                    <span>Climate Drivers</span>
+                  </h4>
+                  <div className="grid grid-cols-2 gap-4 mb-3">
+                    <div className="text-center">
+                      <p className="text-xs text-white/70">ENSO Status</p>
+                      <p className="text-white font-medium">{outlookData.climate_drivers.enso_status}</p>
+                    </div>
+                    <div className="text-center">
+                      <p className="text-xs text-white/70">Indian Ocean Dipole</p>
+                      <p className="text-white font-medium">{outlookData.climate_drivers.iod_status}</p>
+                    </div>
+                  </div>
+                  <p className="text-sm text-blue-200">{outlookData.climate_drivers.influence_summary}</p>
+                </div>
+              )}
+
+              {/* Main Outlook Cards Grid */}
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                <OutlookCard
+                  title="Temperature"
+                  data={outlookData.temperature}
+                  icon={Thermometer}
+                  colorClass="border-red-500/30"
+                />
+                <OutlookCard
+                  title="Precipitation"
+                  data={outlookData.precipitation}
+                  icon={CloudRain}
+                  colorClass="border-blue-500/30"
+                />
+                <OutlookCard
+                  title="Storm Activity"
+                  data={outlookData.storms}
+                  icon={Zap}
+                  colorClass="border-yellow-500/30"
+                />
+                <OutlookCard
+                  title="Cyclone Outlook"
+                  data={outlookData.cyclones}
+                  icon={Wind}
+                  colorClass="border-red-500/30"
+                />
+                <OutlookCard
+                  title="Wind Shear"
+                  data={outlookData.wind_shear}
+                  icon={Wind}
+                  colorClass="border-purple-500/30"
+                />
+              </div>
+
+              {/* Cyclone Detail Section */}
+              {outlookData.cyclones && (
+                <div className="bg-red-900/20 p-4 rounded-lg border border-red-500/30">
+                  <h4 className="font-semibold text-red-300 mb-3 flex items-center space-x-2">
+                    <AlertTriangle className="w-4 h-4" />
+                    <span>Cyclone Season Details</span>
+                  </h4>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div>
+                      <p className="text-xs text-white/70 mb-1">Formation Zones</p>
+                      <div className="space-y-1">
+                        {outlookData.cyclones.formation_zones?.map((zone, i) => (
+                          <Badge key={i} variant="outline" className="border-red-400 text-red-300 mr-2">
+                            {zone}
+                          </Badge>
+                        ))}
+                      </div>
+                    </div>
+                    <div>
+                      <p className="text-xs text-white/70 mb-1">Landfall Risk</p>
+                      <p className="text-red-200">{outlookData.cyclones.landfall_risk}</p>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Wind Shear Impact */}
+              {outlookData.wind_shear?.impact_on_storms && (
+                <div className="bg-gray-800/30 p-4 rounded-lg">
+                  <h4 className="font-semibold text-white mb-2 flex items-center space-x-2">
+                    <Info className="w-4 h-4 text-blue-400" />
+                    <span>Wind Shear Impact on Storm Development</span>
+                  </h4>
+                  <p className="text-sm text-white/90">{outlookData.wind_shear.impact_on_storms}</p>
+                </div>
+              )}
+
+              {/* Disclaimer */}
+              <div className="text-xs text-gray-500 dark:text-gray-400 p-3 bg-gray-800/20 rounded-lg">
+                <p className="flex items-center space-x-2">
+                  <Info className="w-3 h-3" />
+                  <span>Seasonal outlooks are guidance based on climate patterns and have inherent uncertainty. Always refer to official meteorological services for current warnings and detailed forecasts.</span>
+                </p>
+              </div>
+            </div>
+          ) : (
+            <div className="h-32 flex items-center justify-center">
+              <div className="text-center text-gray-600 dark:text-gray-400">
+                <Calendar className="w-8 h-8 mx-auto mb-2 opacity-50" />
+                <p className="text-sm">Unable to load seasonal outlook</p>
+                <Button onClick={fetchSeasonalOutlook} variant="ghost" size="sm" className="mt-2">
+                  Try again
+                </Button>
+              </div>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+    </motion.div>
+  );
+}
+ 
