@@ -1,0 +1,149 @@
+import React from 'react';
+import { motion } from 'framer-motion';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Badge } from '@/components/ui/badge';
+import { Zap, TrendingUp, AlertTriangle, Cloud, Loader2 } from 'lucide-react';
+import { useTheme } from '../theme/ThemeProvider';
+
+const capeColors = {
+  'Low': { bg: 'bg-green-100 dark:bg-green-900/20', text: 'text-green-800 dark:text-green-200', color: '#22c55e' },
+  'Moderate': { bg: 'bg-yellow-100 dark:bg-yellow-900/20', text: 'text-yellow-800 dark:text-yellow-200', color: '#eab308' },
+  'High': { bg: 'bg-orange-100 dark:bg-orange-900/20', text: 'text-orange-800 dark:text-orange-200', color: '#f97316' },
+  'Very High': { bg: 'bg-red-100 dark:bg-red-900/20', text: 'text-red-800 dark:text-red-200', color: '#ef4444' },
+  'Extreme': { bg: 'bg-purple-100 dark:bg-purple-900/20', text: 'text-purple-800 dark:text-purple-200', color: '#a855f7' }
+};
+
+export default function CapeIndex({ capeData }) {
+  const { theme } = useTheme();
+
+  if (!capeData) {
+    return (
+        <Card className={`${theme === 'dark' ? 'glass-effect-dark' : 'glass-effect-light'} border-white/20`}>
+            <CardHeader>
+                <CardTitle className="flex items-center space-x-2 text-white">
+                    <Zap className="w-5 h-5 text-yellow-600" />
+                    <span>CAPE Index</span>
+                </CardTitle>
+            </CardHeader>
+            <CardContent className="h-48 flex items-center justify-center">
+                <Loader2 className="w-8 h-8 animate-spin text-gray-400" />
+            </CardContent>
+        </Card>
+    );
+  }
+
+  const { value, severity, shear, lifted_index, helicity, storm_motion = "N/A", supercell_risk = "low" } = capeData;
+  const colors = capeColors[severity] || capeColors['Low'];
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 20 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.6, delay: 0.9 }}
+    >
+      <Card className={`${theme === 'dark' ? 'glass-effect-dark' : 'glass-effect-light'} border-white/20`}>
+        <CardHeader>
+          <CardTitle className="flex items-center space-x-2 text-white">
+            <Zap className="w-5 h-5 text-yellow-600" />
+            <span>CAPE Index</span>
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center space-x-3">
+              <div className="text-3xl font-bold text-white">
+                {value}
+              </div>
+              <div>
+                <Badge className={`${colors.bg} ${colors.text} font-semibold px-3 py-1`}>
+                  {severity}
+                </Badge>
+                <div className="text-xs text-gray-400 mt-1">J/kg</div>
+              </div>
+            </div>
+            <Zap className="w-8 h-8" style={{ color: colors.color }} />
+          </div>
+
+          <div className="grid grid-cols-3 gap-4 text-sm">
+            <div className={`p-3 rounded-lg ${
+              theme === 'dark' ? 'bg-gray-800/30' : 'bg-gray-50'
+            }`}>
+              <div className="text-center">
+                <div className="font-bold text-lg text-white">{shear}</div>
+                <div className="text-xs text-gray-400">Wind Shear</div>
+              </div>
+            </div>
+
+            <div className={`p-3 rounded-lg ${
+              theme === 'dark' ? 'bg-gray-800/30' : 'bg-gray-50'
+            }`}>
+              <div className="text-center">
+                <div className="font-bold text-lg text-white">{lifted_index}</div>
+                <div className="text-xs text-gray-400">Lifted Index</div>
+              </div>
+            </div>
+
+            <div className={`p-3 rounded-lg ${
+              theme === 'dark' ? 'bg-gray-800/30' : 'bg-gray-50'
+            }`}>
+              <div className="text-center">
+                <div className="font-bold text-lg text-white">{helicity}</div>
+                <div className="text-xs text-gray-400">Helicity</div>
+              </div>
+            </div>
+          </div>
+
+          <div className={`p-4 rounded-lg border ${colors.bg} ${colors.text}`}>
+            <div className="flex items-center space-x-2 mb-2">
+              <Cloud className="w-5 h-5" />
+              <span className="font-bold">Thunderstorm Potential</span>
+            </div>
+            <p className="text-sm">
+              {severity === 'Extreme' 
+                ? "Extremely high potential for severe thunderstorms, tornadoes, and large hail."
+                : severity === 'Very High'
+                ? "Very high potential for severe thunderstorms with damaging winds and hail."
+                : severity === 'High'
+                ? "High potential for thunderstorm development with moderate to strong updrafts."
+                : severity === 'Moderate'
+                ? "Moderate thunderstorm potential. Storms may develop under favorable conditions."
+                : "Low thunderstorm potential. Stable atmospheric conditions."
+              }
+            </p>
+          </div>
+
+          <div className="grid grid-cols-2 gap-3 text-sm">
+            <div className={`p-3 rounded-lg ${
+              theme === 'dark' ? 'bg-gray-800/20' : 'bg-gray-50/50'
+            }`}>
+              <div className="text-gray-400 mb-1">Storm Motion</div>
+              <div className="font-semibold text-white">
+                {storm_motion}
+              </div>
+            </div>
+
+            <div className={`p-3 rounded-lg ${
+              theme === 'dark' ? 'bg-gray-800/20' : 'bg-gray-50/50'
+            }`}>
+              <div className="text-gray-400 mb-1">Supercell Risk</div>
+              <div className="font-semibold text-white capitalize">
+                {supercell_risk}
+              </div>
+            </div>
+          </div>
+
+          {(severity === 'Very High' || severity === 'Extreme') && (
+            <div className={`p-3 rounded-lg border-2 border-red-500 bg-red-50 dark:bg-red-900/20 text-red-800 dark:text-red-200`}>
+              <div className="flex items-center space-x-2 mb-1">
+                <AlertTriangle className="w-4 h-4" />
+                <span className="font-bold text-sm">Severe Weather Alert</span>
+              </div>
+              <p className="text-xs">
+                High atmospheric instability detected. Monitor for severe thunderstorm warnings and take appropriate precautions.
+              </p>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+    </motion.div>
+  );
