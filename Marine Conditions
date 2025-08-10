@@ -1,0 +1,217 @@
+import React, { useState, useEffect } from 'react';
+import { motion } from 'framer-motion';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import { Sailboat, Waves, Wind, Sun, Moon, Calendar as CalendarIcon, RefreshCw, Loader2 } from 'lucide-react';
+import { InvokeLLM } from '@/integrations/Core';
+import { useTheme } from '../theme/ThemeProvider';
+
+// Reusable component for displaying marine data
+const InfoCard = ({ title, value, unit, icon: Icon }) => (
+  <div className="glass-effect-dark p-4 rounded-lg text-center">
+    <Icon className="w-8 h-8 mx-auto mb-2 text-blue-400" />
+    <p className="text-sm text-white/70">{title}</p>
+    <p className="text-slate-50 text-xl font-bold">{value} <span className="text-sm font-normal">{unit}</span></p>
+  </div>
+);
+
+// Reusable component for tide information
+const TideInfo = ({ time, height, type }) => (
+  <div className="flex items-center justify-between p-3 bg-gray-800/30 rounded-lg">
+    <div className="flex items-center space-x-2">
+      {type === 'High' ? <Sun className="w-5 h-5 text-yellow-400" /> : <Moon className="w-5 h-5 text-gray-400" />}
+      <p className="text-slate-50">{type} Tide</p>
+    </div>
+    <div className="text-right">
+      <p className="text-slate-300 font-semibold">{time}</p>
+      <p className="text-slate-300 text-sm">{height?.toFixed(1)} m</p>
+    </div>
+  </div>
+);
+
+export default function MarineConditions({ weatherData }) {
+  const { theme } = useTheme();
+  const [marineData, setMarineData] = useState(null);
+  const [isLoading, setIsLoading] = useState(false);
+  const [lastUpdated, setLastUpdated] = useState(null);
+
+  const fetchMarineData = async () => {
+    if (!weatherData?.location) return;
+
+    setIsLoading(true);
+    try {
+      const response = await InvokeLLM({
+        prompt: `Provide a comprehensive marine and coastal forecast for ${weatherData.location} based on the following weather data:
+
+        Current Conditions:
+        - Temperature: ${weatherData.current_temp}°C
+        - Pressure: ${weatherData.pressure} hPa
+        - Humidity: ${weatherData.humidity}%
+        - Wind: ${weatherData.wind_speed} km/h ${weatherData.wind_direction}
+        - Visibility: ${weatherData.visibility} km
+        - Weather: ${weatherData.description}
+
+        Consider these marine factors:
+        1. Tide times: next two high tides and next two low tides with times and heights in meters
+        2. Wave forecast: significant wave height (meters), primary swell direction, and wave period (seconds)
+        3. Wind forecast: wind speed (knots) and wind direction for morning, afternoon, and evening
+        4. Sea surface temperature in Celsius
+        5. Marine weather summary including boating conditions
+        
+        Provide a comprehensive marine forecast.`,
+        add_context_from_internet: true,
+        response_json_schema: {
+          type: "object",
+          properties: {
+            summary: { type: "string" },
+            tides: {
+              type: "array",
+              items: {
+                type: "object",
+                properties: {
+                  type: { type: "string", enum: ["High", "Low"] },
+                  time: { type: "string" },
+                  height: { type: "number" }
+                },
+                required: ["type", "time", "height"]
+              }
+            },
+            waves: {
+              type: "object",
+              properties: {
+                height: { type: "number" },
+                direction: { type: "string" },
+                period: { type: "number" }
+              },
+              required: ["height", "direction", "period"]
+            },
+            wind: {
+              type: "array",
+              items: {
+                type: "object",
+                properties: {
+                  period: { type: "string" },
+                  speed: { type: "number" },
+                  direction: { type: "string" }
+                },
+                required: ["period", "speed", "direction"]
+              }
+            },
+            sea_temp: { type: "number" },
+            boating_conditions: {
+              type: "object",
+              properties: {
+                rating: { type: "string", enum: ["Excellent", "Good", "Fair", "Poor", "Dangerous"] },
+                description: { type: "string" }
+              }
+            }
+          },
+          required: ["summary", "tides", "waves", "wind", "sea_temp"]
+        }
+      });
+
+      if (response) {
+        setMarineData(response);
+        setLastUpdated(new Date());
+      }
+    } catch (error) {
+      console.error('Error fetching marine data:', error);
+      // Fallback to basic marine data
+      setMarineData({
+        summary: "Marine conditions based on current weather data.",
+        tides: [
+          { type: "High", time: "6:30 AM", height: 2.1 },
+          { type: "Low", time: "12:45 PM", height: 0.4 },
+          { type: "High", time: "7:15 PM", height: 2.3 },
+          { type: "Low", time: "1:20 AM", height: 0.2 }
+        ],
+        waves: {
+          height: 1.2,
+          direction: "Northeast",
+          period: 8
+        },
+        wind: [
+          { period: "Morning", speed: weatherData.wind_speed * 0.54 || 10, direction: weatherData.wind_direction || "E" },
+          { period: "Afternoon", speed: (weatherData.wind_speed * 0.54) + 5 || 15, direction: weatherData.wind_direction || "SE" },
+          { period: "Evening", speed: (weatherData.wind_speed * 0.54) - 2 || 8, direction: weatherData.wind_direction || "E" }
+        ],
+        sea_temp: weatherData.current_temp - 2 || 24,
+        boating_conditions: {
+          rating: weatherData.wind_speed > 25 ? "Poor" : weatherData.wind_speed > 15 ? "Fair" : "Good",
+          description: "Conditions based on current wind and weather patterns."
+        }
+      });
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (weatherData?.location) {
+      fetchMarineData();
+    }
+  }, [weatherData?.location]);
+
+  if (!weatherData) return null;
+
+  const getBoatingColor = (rating) => {
+    switch (rating) {
+      case 'Excellent': return 'bg-green-100 text-green-800 border-green-200 dark:bg-green-900/20 dark:text-green-200';
+      case 'Good': return 'bg-blue-100 text-blue-800 border-blue-200 dark:bg-blue-900/20 dark:text-blue-200';
+      case 'Fair': return 'bg-yellow-100 text-yellow-800 border-yellow-200 dark:bg-yellow-900/20 dark:text-yellow-200';
+      case 'Poor': return 'bg-orange-100 text-orange-800 border-orange-200 dark:bg-orange-900/20 dark:text-orange-200';
+      case 'Dangerous': return 'bg-red-100 text-red-800 border-red-200 dark:bg-red-900/20 dark:text-red-200';
+      default: return 'bg-gray-100 text-gray-800 border-gray-200 dark:bg-gray-900/20 dark:text-gray-200';
+    }
+  };
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 20 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.6, delay: 0.8 }}
+    >
+      <Card className={`${theme === 'dark' ? 'glass-effect-dark' : 'glass-effect-light'} border-white/20`}>
+        <CardHeader>
+          <div className="flex items-center justify-between">
+            <CardTitle className="flex items-center space-x-2 text-gray-900 dark:text-white">
+              <Sailboat className="w-5 h-5 text-blue-600" />
+              <span>Marine & Coastal Forecast</span>
+            </CardTitle>
+            <Button
+              onClick={fetchMarineData}
+              disabled={isLoading}
+              variant="outline"
+              size="sm"
+              className="bg-slate-950 text-slate-50 px-3 text-sm font-medium inline-flex items-center justify-center gap-2 whitespace-nowrap ring-offset-background transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:size-4 [&_svg]:shrink-0 border border-input hover:bg-accent hover:text-accent-foreground h-9 rounded-md"
+            >
+              <RefreshCw className={`w-4 h-4 ${isLoading ? 'animate-spin' : ''}`} />
+            </Button>
+          </div>
+          {lastUpdated && (
+            <p className="text-xs text-gray-600 dark:text-gray-400">
+              Last updated: {lastUpdated.toLocaleTimeString()}
+            </p>
+          )}
+        </CardHeader>
+        <CardContent>
+          {isLoading && !marineData ? (
+            <div className="h-48 flex items-center justify-center">
+              <div className="text-center">
+                <Loader2 className="w-8 h-8 animate-spin mx-auto mb-2 text-blue-500" />
+                <p className="text-sm text-gray-600 dark:text-gray-400">Loading marine conditions...</p>
+              </div>
+            </div>
+          ) : marineData ? (
+            <div className="space-y-6">
+              {/* Summary */}
+              <div className={`p-4 rounded-lg ${theme === 'dark' ? 'bg-gray-800/30' : 'bg-gray-50'}`}>
+                <p className="text-white/90 text-sm">{marineData.summary}</p>
+              </div>
+
+              {/* Boating Conditions */}
+              {marineData.boating_conditions && (
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center space-x-3">
+ 
