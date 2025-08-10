@@ -1,0 +1,346 @@
+
+import React, { useState, useEffect, useRef } from 'react';
+import { motion } from 'framer-motion';
+import { MapContainer, TileLayer, Marker, Polyline, Popup } from 'react-leaflet';
+import 'leaflet/dist/leaflet.css';
+import L from 'leaflet';
+import { InvokeLLM } from '@/integrations/Core';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
+import { Badge } from '@/components/ui/badge';
+import { Wind, Gauge, Move, Radio, CloudRain, ShieldCheck, Loader2, RefreshCw, Info } from 'lucide-react';
+
+// Fix for default marker icon issue
+delete L.Icon.Default.prototype._getIconUrl;
+L.Icon.Default.mergeOptions({
+  iconRetinaUrl: 'https://unpkg.com/leaflet@1.7.1/dist/images/marker-icon-2x.png',
+  iconUrl: 'https://unpkg.com/leaflet@1.7.1/dist/images/marker-icon.png',
+  shadowUrl: 'https://unpkg.com/leaflet@1.7.1/dist/images/marker-shadow.png',
+});
+
+// Custom icon for cyclone center
+const cycloneIcon = new L.divIcon({
+  className: 'custom-cyclone-marker',
+  html: `<div class="w-8 h-8 bg-red-600/80 border-2 border-white rounded-full flex items-center justify-center animate-pulse"><Wind class="w-4 h-4 text-white" /></div>`,
+  iconSize: [32, 32],
+  iconAnchor: [16, 16],
+});
+
+const CycloneInfo = () => (
+  <Card className="glass-effect-dark border-white/20">
+    <CardHeader>
+      <CardTitle className="flex items-center space-x-2 text-white">
+        <Info className="w-5 h-5 text-blue-400" />
+        <span>Australian Cyclone Categories</span>
+      </CardTitle>
+    </CardHeader>
+    <CardContent className="space-y-3">
+      {[
+        { cat: 1, winds: '63-88 km/h', damage: 'Minimal house damage.' },
+        { cat: 2, winds: '89-117 km/h', damage: 'Minor house damage. Significant damage to signs, trees.' },
+        { cat: 3, winds: '118-159 km/h', damage: 'Some roof and structural damage. Power failures likely.' },
+        { cat: 4, winds: '160-199 km/h', damage: 'Significant roofing loss and structural damage. Widespread power failures.' },
+        { cat: 5, winds: '200+ km/h', damage: 'Extremely dangerous with widespread destruction.' },
+      ].map(c => (
+        <div key={c.cat} className="flex items-center text-sm">
+          <Badge className="w-20 text-center justify-center mr-3 bg-blue-500 text-white">Category {c.cat}</Badge>
+          <div className="flex-1">
+            <p className="font-semibold text-white">{c.winds}</p>
+            <p className="text-xs text-gray-400">{c.damage}</p>
+          </div>
+        </div>
+      ))}
+    </CardContent>
+  </Card>
+);
+
+export default function CycloneTracking() {
+  const [cycloneData, setCycloneData] = useState([]);
+  const [monsoonStatus, setMonsoonStatus] = useState(null);
+  const [isLoading, setIsLoading] = useState(true);
+  const [historicalData, setHistoricalData] = useState([]);
+  const mapRef = useRef(null);
+
+  const fetchTrackingData = async () => {
+    setIsLoading(true);
+
+    try {
+      const [cycloneResult, monsoonResult, historicalResult] = await Promise.allSettled([
+        InvokeLLM({
+          prompt: `Check for CURRENT active tropical cyclones in the Australian region and Southwest Pacific. Use official Bureau of Meteorology data and current meteorological reports. 
+          
+          Search specifically for:
+          1. Active tropical cyclones currently tracked by Australian Bureau of Meteorology
+          2. Current cyclone warnings and watches for Queensland, Northern Territory, Western Australia
+          3. Any developing tropical lows that could become cyclones
+          4. Current position, intensity, and movement data from latest BOM updates
+          
+          If there are NO active cyclones, return an empty array. Only include cyclones that are currently active and being tracked by official weather services.
+          
+          For each active cyclone, provide ACCURATE current data including exact coordinates from official tracking.`,
+          add_context_from_internet: true,
+          response_json_schema: {
+            type: "object",
+            properties: {
+              active_cyclones: {
+                type: "array",
+                items: {
+                  type: "object",
+                  properties: {
+                    name: { type: "string" },
+                    category: { type: "number" },
+                    current_latitude: { type: "number" },
+                    current_longitude: { type: "number" },
+                    central_pressure_hpa: { type: "number" },
+                    max_wind_speed_kph: { type: "number" },
+                    movement_direction: { type: "string" },
+                    movement_speed_kph: { type: "number" },
+                    threat_level: { type: "string" },
+                    affected_areas: { type: "array", items: { type: "string" } },
+                    last_update: { type: "string" },
+                    forecast_track: {
+                      type: "array",
+                      items: {
+                        type: "object",
+                        properties: {
+                          latitude: { type: "number" },
+                          longitude: { type: "number" },
+                          forecast_time_utc: { type: "string" },
+                          predicted_category: { type: "number" }
+                        }
+                      }
+                    }
+                  },
+                  required: ["name", "category", "current_latitude", "current_longitude"]
+                }
+              },
+              data_source: { type: "string" },
+              last_updated: { type: "string" }
+            }
+          }
+        }),
+        InvokeLLM({
+          prompt: `Get current Australian monsoon status from Bureau of Meteorology. Check:
+          
+          1. Current monsoon trough position and activity
+          2. Whether the monsoon is currently active across northern Australia
+          3. Impact on current weather patterns
+          4. Expected monsoon behavior for the current time of year
+          5. Any monsoon-related weather warnings
+          
+          Use current BOM tropical weather reports and seasonal outlook data.`,
+          add_context_from_internet: true,
+          response_json_schema: {
+            type: "object",
+            properties: {
+              is_active: { type: "boolean" },
+              strength: { type: "string", enum: ["weak", "moderate", "strong"] },
+              location_summary: { type: "string" },
+              impact_summary: { type: "string" },
+              current_phase: { type: "string" },
+              expected_duration: { type: "string" },
+              rainfall_outlook: { type: "string" }
+            },
+            required: ["is_active", "location_summary", "impact_summary"]
+          }
+        }),
+        InvokeLLM({
+          prompt: `Get recent cyclone activity for the Australian region in the past 12 months. Include:
+          
+          1. Major cyclones that have affected Australia in the current cyclone season
+          2. Their peak intensity and impacts
+          3. Current cyclone season outlook and predictions
+          4. Historical comparison for this time of year
+          
+          Focus on factual, recent data from official sources.`,
+          add_context_from_internet: true,
+          response_json_schema: {
+            type: "object",
+            properties: {
+              recent_cyclones: {
+                type: "array",
+                items: {
+                  type: "object",
+                  properties: {
+                    name: { type: "string" },
+                    peak_category: { type: "number" },
+                    date_occurred: { type: "string" },
+                    affected_areas: { type: "array", items: { type: "string" } },
+                    max_winds: { type: "number" },
+                    impacts: { type: "string" }
+                  }
+                }
+              },
+              season_outlook: { type: "string" },
+              current_conditions: { type: "string" }
+            }
+          }
+        })
+      ]);
+
+      if (cycloneResult.status === 'fulfilled') {
+        setCycloneData(cycloneResult.value.active_cyclones || []);
+      }
+      if (monsoonResult.status === 'fulfilled') {
+        setMonsoonStatus(monsoonResult.value);
+      }
+      if (historicalResult.status === 'fulfilled') {
+        setHistoricalData(historicalResult.value);
+      }
+
+    } catch (error) {
+      console.error("Failed to fetch tracking data:", error);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchTrackingData();
+    // Refresh data every 30 minutes for more current information
+    const interval = setInterval(fetchTrackingData, 30 * 60 * 1000);
+    return () => clearInterval(interval);
+  }, []);
+
+  const cyclone = cycloneData && cycloneData.length > 0 ? cycloneData[0] : null;
+
+  return (
+    <div className="min-h-screen p-6">
+      <div className="max-w-7xl mx-auto space-y-8">
+        <motion.div initial={{ opacity: 0, y: -20 }} animate={{ opacity: 1, y: 0 }} className="flex justify-between items-center">
+          <div className="flex items-center space-x-3">
+            <div className="w-12 h-12 bg-gradient-to-br from-red-500 to-orange-600 rounded-xl flex items-center justify-center">
+              <Wind className="w-7 h-7 text-white" />
+            </div>
+            <div>
+              <h1 className="text-3xl font-bold text-white">Cyclone & Monsoon Tracking</h1>
+              <p className="text-white/70">Official Bureau of Meteorology data</p>
+            </div>
+          </div>
+          <Button onClick={fetchTrackingData} disabled={isLoading} variant="outline" className="bg-transparent border-white/20 text-white hover:bg-white/20">
+            {isLoading ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <RefreshCw className="w-4 h-4 mr-2" />}
+            Refresh Data
+          </Button>
+        </motion.div>
+
+        {isLoading ? (
+          <div className="flex justify-center items-center h-64">
+            <div className="text-center">
+              <Loader2 className="w-12 h-12 animate-spin text-blue-400 mx-auto mb-4" />
+              <p className="text-white">Loading current cyclone data...</p>
+            </div>
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+            <div className="lg:col-span-2 space-y-8">
+              {cyclone ? (
+                <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
+                  <Card className="glass-effect-dark border-red-500/30">
+                    <CardHeader>
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <CardTitle className="text-2xl text-white">
+                            Tropical Cyclone {cyclone.name}
+                          </CardTitle>
+                          <Badge className="w-auto bg-red-600 text-white mt-1">
+                            Category {cyclone.category}
+                          </Badge>
+                        </div>
+                        {cyclone.threat_level && (
+                          <Badge variant="outline" className="border-orange-500 text-orange-400">
+                            {cyclone.threat_level}
+                          </Badge>
+                        )}
+                      </div>
+                      {cyclone.last_update && (
+                        <p className="text-sm text-gray-400">Last updated: {cyclone.last_update}</p>
+                      )}
+                    </CardHeader>
+                    <CardContent>
+                      <div className="h-96 w-full rounded-lg overflow-hidden mb-6 border border-white/20">
+                        <MapContainer
+                          ref={mapRef}
+                          center={[cyclone.current_latitude, cyclone.current_longitude]}
+                          zoom={6}
+                          style={{ height: '100%', width: '100%' }}
+                          scrollWheelZoom={true}
+                        >
+                          <TileLayer
+                            url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
+                            attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>'
+                          />
+                          <Marker position={[cyclone.current_latitude, cyclone.current_longitude]} icon={cycloneIcon}>
+                            <Popup>
+                              <div className="text-black font-semibold">
+                                <p>Cyclone {cyclone.name}</p>
+                                <p>Category {cyclone.category}</p>
+                                <p>Winds: {cyclone.max_wind_speed_kph} km/h</p>
+                              </div>
+                            </Popup>
+                          </Marker>
+                          {cyclone.forecast_track && cyclone.forecast_track.length > 0 && (
+                            <Polyline
+                              positions={[
+                                [cyclone.current_latitude, cyclone.current_longitude], 
+                                ...cyclone.forecast_track.map(p => [p.latitude, p.longitude])
+                              ]}
+                              color="rgba(255, 255, 255, 0.8)"
+                              dashArray="5, 10"
+                              weight={3}
+                            />
+                          )}
+                        </MapContainer>
+                      </div>
+                      
+                      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-white mb-6">
+                        <div className="glass-effect-dark p-3 rounded-lg text-center">
+                          <Wind className="w-6 h-6 mx-auto mb-1 text-blue-400"/>
+                          <p className="font-bold">{cyclone.max_wind_speed_kph} km/h</p>
+                          <p className="text-xs text-gray-400">Max Winds</p>
+                        </div>
+                        <div className="glass-effect-dark p-3 rounded-lg text-center">
+                          <Gauge className="w-6 h-6 mx-auto mb-1 text-blue-400"/>
+                          <p className="font-bold">{cyclone.central_pressure_hpa} hPa</p>
+                          <p className="text-xs text-gray-400">Pressure</p>
+                        </div>
+                        <div className="glass-effect-dark p-3 rounded-lg text-center">
+                          <Move className="w-6 h-6 mx-auto mb-1 text-blue-400"/>
+                          <p className="font-bold">{cyclone.movement_direction}</p>
+                          <p className="text-xs text-gray-400">Direction</p>
+                        </div>
+                        <div className="glass-effect-dark p-3 rounded-lg text-center">
+                          <Move className="w-6 h-6 mx-auto mb-1 text-green-400"/>
+                          <p className="font-bold">{cyclone.movement_speed_kph || 'N/A'} km/h</p>
+                          <p className="text-xs text-gray-400">Speed</p>
+                        </div>
+                      </div>
+
+                      {cyclone.affected_areas && cyclone.affected_areas.length > 0 && (
+                        <div className="bg-orange-900/20 p-4 rounded-lg border border-orange-500/30">
+                          <h4 className="font-semibold text-orange-300 mb-2">Areas Under Watch/Warning</h4>
+                          <div className="flex flex-wrap gap-2">
+                            {cyclone.affected_areas.map((area, index) => (
+                              <Badge key={index} variant="outline" className="border-orange-400 text-orange-300">
+                                {area}
+                              </Badge>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </CardContent>
+                  </Card>
+                </motion.div>
+              ) : (
+                <Card className="glass-effect-dark border-green-500/30 h-full flex items-center justify-center">
+                  <CardContent className="text-center p-10">
+                    <ShieldCheck className="w-16 h-16 mx-auto mb-4 text-green-400" />
+                    <h3 className="text-xl font-bold text-white">All Clear</h3>
+                    <p className="text-gray-300">No active tropical cyclones in the Australian region.</p>
+                    <p className="text-sm text-gray-400 mt-2">Data sourced from Bureau of Meteorology</p>
+                  </CardContent>
+                </Card>
+              )}
+
+              {/* Historical/Recent Activity */}
+              {historicalData && historicalData.recent_cyclones && historicalData.recent_cyclones.length > 0 && (
+                <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.3 }}>
